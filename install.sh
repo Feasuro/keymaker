@@ -1,10 +1,11 @@
 #!/bin/bash
 
-echo "Starting the script"
 backtitle="Keymaker"
 
+echo "Looking for connected devices."
 declare -A removable_devices
 
+# Find connected removable devices
 for sys_path in /sys/block/*; do
     # Reset variables for each iteration
     unset id_bus id_vendor id_model devname
@@ -29,37 +30,85 @@ for sys_path in /sys/block/*; do
     fi
 done
 
-# Check if we have any devices
-if [[ ${#removable_devices[@]} -eq 0 ]]; then
-    if dialog --keep-tite \
+function manual_entry() {
+    local result
+    result=$(dialog --keep-tite \
         --backtitle "$backtitle" \
-        --title "No removable USB devices found" \
-        --yesno "Would you like to specify device manually? (advanced)" 7 40
-    then
-        exit
-    else
-        exit 0
-    fi
-fi
-
-# Build dialog menu arguments
-menu_items=()
-for dev in "${!removable_devices[@]}"; do
-    menu_items+=("$dev" "${removable_devices[$dev]}")
-done
-menu_items+=("other" "Specify device manually (advanced)")
-menu_items+=("cancel" "Exit program")
-
-# Show dialog menu
-selected=$(dialog --keep-tite --stdout \
-    --backtitle "$backtitle" \
-    --title "Select USB Device" \
-    --menu "Choose a removable USB device:" 15 60 6 \
-    "${menu_items[@]}"
+        --title "Enter device" \
+        --inputbox "Enter device name (e.g. /dev/sdX)" 10 40 \
+        2>&1 >/dev/tty
     )
 
-if [[ -n "$selected" ]]; then
-    echo "You selected: $selected"
+    if [ -b "$result" ]; then
+        echo "$result"
+        return 0
+    else
+        dialog --keep-tite \
+        --backtitle "$backtitle" \
+        --title "Error" \
+        --msgbox "${result} is not a valid block device!" 10 40 \
+        >/dev/tty
+        return 1
+    fi
+}
+
+device=""
+# Check if we have any devices
+if [[ ${#removable_devices[@]} -eq 0 ]]; then
+    echo "No removable devices found"
+
+    while true; do
+        if dialog --keep-tite \
+            --backtitle "$backtitle" \
+            --title "No removable USB devices found" \
+            --yesno "Would you like to specify device manually? (advanced)" 7 40
+        then
+            device="$(manual_entry)" 
+        else
+            echo "Exiting."
+            exit 0
+        fi
+
+        # Exit loop if device was chosen
+        if [ -n "$device" ]; then
+            echo "Chosen device: ${device}"
+            break
+        fi
+    done
 else
-    echo "No selection made."
+    echo "Found devices:" "${!removable_devices[@]}"
+
+    # Build dialog menu arguments
+    menu_items=()
+    for dev in "${!removable_devices[@]}"; do
+        menu_items+=("$dev" "${removable_devices[$dev]}")
+    done
+    menu_items+=("other" "Specify device manually (advanced)")
+    menu_items+=("cancel" "Exit program")
+
+    # Show menu dialog
+    while true; do
+        selected=$(dialog --keep-tite --stdout \
+            --backtitle "$backtitle" \
+            --title "Select USB Device" \
+            --menu "Choose a removable USB device:" 15 60 6 \
+            "${menu_items[@]}"
+            )
+
+        case $selected in
+            cancel)
+                echo "Exiting"
+                exit 0;;
+            other)
+                device="$(manual_entry)";;
+            *)
+                device="$selected";;
+        esac
+
+        # Exit loop if device was chosen properly
+        if [ -n "$device" ]; then
+            echo "Chosen device: ${device}"
+            break
+        fi
+    done
 fi
