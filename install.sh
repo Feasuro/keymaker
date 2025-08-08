@@ -32,24 +32,33 @@ done
 
 function manual_entry() {
     local result
-    result=$(dialog --keep-tite \
+    result=$(dialog --keep-tite --stdout \
         --backtitle "$backtitle" \
         --title "Enter device" \
-        --inputbox "Enter device name (e.g. /dev/sdX)" 10 40 \
-        2>&1 >/dev/tty
+        --inputbox "Enter device name (e.g. /dev/sdX)" 10 40
     )
 
     if [ -b "$result" ]; then
-        echo "$result"
-        return 0
+        devtype="$(udevadm info --query=property --no-pager --name="${result}" \
+            2>/dev/null | grep '^DEVTYPE=' | cut -d= -f2)"
+        if [ "$devtype" = "disk" ]; then
+            echo "$result"
+            return 0
+        elif dialog --keep-tite --stdout \
+            --backtitle "$backtitle" \
+            --title "Warning" \
+            --yesno "${result} appears to be ${devtype} not a disk.\nAre you sure you know what you are doing?" 10 40
+            then
+            echo "$result"
+            return 0
+        fi
     else
-        dialog --keep-tite \
+        dialog --keep-tite --stdout \
         --backtitle "$backtitle" \
         --title "Error" \
-        --msgbox "${result} is not a valid block device!" 10 40 \
-        >/dev/tty
-        return 1
+        --msgbox "${result} is not a valid block device!" 10 40
     fi
+    return 1
 }
 
 device=""
@@ -63,7 +72,7 @@ if [[ ${#removable_devices[@]} -eq 0 ]]; then
             --title "No removable USB devices found" \
             --yesno "Would you like to specify device manually? (advanced)" 7 40
         then
-            device="$(manual_entry)" 
+            device="$(manual_entry)"
         else
             echo "Exiting."
             exit 0
@@ -88,7 +97,7 @@ else
 
     # Show menu dialog
     while true; do
-        selected=$(dialog --keep-tite --stdout \
+        selected=$(dialog --keep-tite --no-cancel --stdout \
             --backtitle "$backtitle" \
             --title "Select USB Device" \
             --menu "Choose a removable USB device:" 15 60 6 \
@@ -111,4 +120,22 @@ else
             break
         fi
     done
+fi
+
+dev_size="$(sudo blockdev --getsize64 "${device}")"
+
+msg="$(cat << EOF
+Would you like to create new partition table?
+\Z1WARNING!\Zn It will erase all data on the device.
+EOF
+)"
+if dialog --keep-tite --colors \
+    --backtitle "$backtitle" \
+    --title "Partitioning" \
+    --yesno "${msg}" 0 0
+then
+    echo "Partitioning"
+else
+    echo "Not Partitioning. Exiting."
+    exit 0
 fi
