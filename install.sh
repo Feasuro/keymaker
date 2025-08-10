@@ -2,9 +2,6 @@
 
 backtitle="Keymaker"
 
-# exit 9 will exit app also from a subshell
-set -E
-trap '[ "$?" -ne 9 ] || app_exit' ERR
 trap 'abort' INT
 
 function abort() {
@@ -15,6 +12,20 @@ function abort() {
 function app_exit() {
     echo "Exiting."
     exit 0
+}
+
+function handle_exit_code() {
+    # Actions of dialog buttons
+    case $1 in
+        0) ((step+=1)) ;;
+        1) app_exit ;;
+        2) echo "dupa dupa";;
+        3) ((step-=1)) ;;
+        *) 
+            echo "Error: Unknown exit code - ${1}"
+            abort
+        ;;
+    esac
 }
 
 function find_devices() {
@@ -46,12 +57,14 @@ function find_devices() {
 
 function manual_dev_entry() {
     local result devtype
+
+    # Show dialog
     result=$(dialog --keep-tite --stdout \
         --backtitle "$backtitle" \
         --title "Enter device" \
         --inputbox "Enter device name (e.g. /dev/sdX)" 10 40
     )
-    [ "$?" -eq 0 ] || return 1
+    [ "$?" -eq 0 ] || return 2
 
     # Check if a block device was given
     if [ -b "$result" ]; then
@@ -59,171 +72,187 @@ function manual_dev_entry() {
             2>/dev/null | grep '^DEVTYPE=' | cut -d= -f2)"
         # Check if it is a disk, ask for confirmation if not
         if [ "$devtype" = "disk" ]; then
-            echo "$result"
+            device="$result"
             return 0
-        elif dialog --keep-tite --stdout \
+        elif dialog --keep-tite \
             --backtitle "$backtitle" \
             --title "Warning" \
             --yesno "${result} appears to be ${devtype} not a disk.\nAre you sure you know what you are doing?" 10 40
             then
-            echo "$result"
+            device="$result"
             return 0
         fi
     else
-        dialog --keep-tite --stdout \
+        dialog --keep-tite \
         --backtitle "$backtitle" \
         --title "Error" \
         --msgbox "${result} is not a valid block device!" 10 40
     fi
-    return 1
+    return 2
 }
 
 function pick_device() {
-    local selected device message dialog_items
+    local result message dialog_items ret
     message="$1"
+
     # Build dialog menu items
     dialog_items=()
     for dev in "${!removable_devices[@]}"; do
         dialog_items+=("$dev" "${removable_devices[$dev]}")
     done
     dialog_items+=("other" "Specify device manually (advanced)")
-    dialog_items+=("cancel" "Exit program")
 
     # Show menu dialog
-    while true; do
-        selected=$(dialog --keep-tite --no-cancel --stdout \
-            --backtitle "$backtitle" \
-            --title "Select USB Device." \
-            --menu "$message" 15 60 6 \
-            "${dialog_items[@]}"
-            )
+    result=$(dialog --keep-tite --stdout \
+        --backtitle "$backtitle" \
+        --title "Select USB Device." \
+        --ok-label "Next" \
+        --cancel-label "Exit" \
+        --menu "$message" 15 60 6 \
+        "${dialog_items[@]}"
+        )
 
-        # Process selection
-        case $selected in
-            cancel)
-                exit 9;;
+    ret=$?
+    # Process selection
+    if [ $ret -eq 0 ]; then
+        case $result in
             other)
-                device="$(manual_dev_entry)";;
+                manual_dev_entry ;;
             *)
-                device="$selected";;
+                device="$result" ;;
         esac
 
-        # Exit loop if device was chosen
-        if [ -n "$device" ]; then
-            echo "$device"
-            return 0
-        fi
-    done
+        [ -n "$device" ] || return 2
+    fi
+
+    echo "Chosen device: ${device}"
+    return $ret
 }
 
 function pick_partitions() {
-    local part_sys part_sto part_emp choices dialog_items
-    part_sys=0
-    part_sto=0
-    part_emp=0
+    local result dialog_items ret
 
+    # Build dialog items
     dialog_items=(1 "Create partitions for bootloader and iso files" on)
     dialog_items+=(2 "Create additional partition for data storage" off)
     dialog_items+=(3 "Leave space for persistence partition(s)" off)
 
-    choices=$(dialog --keep-tite --no-cancel --stdout \
+    # Show dialog
+    result=$(dialog --keep-tite --stdout --extra-button \
         --backtitle "$backtitle" \
         --title "Select options" \
-        --checklist "Choose a removable USB device:" 15 60 6 \
+        --ok-label "Next" \
+        --cancel-label "Exit" \
+        --extra-label "Back" \
+        --checklist "Choose partitions to create:" 15 60 6 \
         "${dialog_items[@]}"
     )
 
-    for opt in $choices; do
-        case $opt in
-            1) part_sys=1 ;;
-            2) part_sto=1 ;;
-            3) part_emp=1 ;;
-        esac
-    done
+    ret=$?
+    # Process selection
+    if [ $ret -eq 0 ]; then
+        for opt in $result; do
+            case $opt in
+                1) part_sys=1 ;;
+                2) part_sto=1 ;;
+                3) part_emp=1 ;;
+            esac
+        done
+    fi
 
-    echo "${part_sys} ${part_sto} ${part_emp}"
+    return $ret
 }
 
 function calculate_sizes() {
-    local dev_size part_sys part_sto part_emp
+    local dev_size ratio chunk
+    local size_sto size_efi size_sys size_emp
     dev_size=$1
-    part_sys=$2
-    part_sto=$3
-    part_emp=$4
-    local ratio chunk
-    local size_sys size_efi size_sto size_emp
 
     # Default proportions:
     ratio=$((2*part_sys+2*part_sto+part_emp))
     chunk=$(((dev_size - 51*1024*1024)/ratio))
 
-    size_sys=$(numfmt --to=iec-i $((2*chunk*part_sys)))
-    size_efi=$(numfmt --to=iec-i $((50*1024*1024)))
     size_sto=$(numfmt --to=iec-i $((2*chunk*part_sto)))
+    size_efi=$(numfmt --to=iec-i $((50*1024*1024)))
+    size_sys=$(numfmt --to=iec-i $((2*chunk*part_sys)))
     size_emp=$(numfmt --to=iec-i $((chunk*part_emp)))
 
-    echo "${size_sys} ${size_efi} ${size_sto} ${size_emp}"
+    echo "${size_sto} ${size_efi} ${size_sys} ${size_emp}"
 }
 
-function partitions_setup() {
-    local part_sys part_efi part_sto part_emp
-    local dev_size dialog_items count
-    part_efi=1
-
-    # User picks which partitions are to make
-    read -r part_sys part_sto part_emp < <(pick_partitions)
+function partitions_size() {
+    local dev_size dialog_items count index
 
     dev_size="$(sudo blockdev --getsize64 "${device}")"
 
     # Build dialog items
     dialog_items=()
     count=0
-    set -- $(calculate_sizes "$dev_size" "$part_sys" "$part_sto" "$part_emp")
-    for part in "$part_sys" "$part_efi" "$part_sto" "$part_emp"; do
+    index=0
+    set -- $(calculate_sizes "$dev_size")
+    for part in "$part_sto" "$part_efi" "$part_sys" "$part_emp"; do
+        ((index+=1))
         if [ "$part" -ne 0 ]; then
             ((count+=1))
-            dialog_items+=("${device}${count}" "$count" 1 "${!count}" "$count" 30 15 0)
+            dialog_items+=("${device}${count}" "$count" 1 "${!index}" "$count" 30 15 0)
         fi
     done
 
-    dialog --keep-tite \
+    # Show dialog
+    dialog --keep-tite --extra-button \
     --backtitle "$backtitle" \
     --title "Confirm " \
+    --ok-label "Next" \
+    --cancel-label "Exit" \
+    --extra-label "Back" \
     --form "The following partitions will be created:" 20 60 4 \
     "${dialog_items[@]}"
 }
 
-clear
-declare -A removable_devices
-echo "Looking for connected devices."
-find_devices
+function main() {
+    clear
+    step=1
+    declare -A removable_devices
+    device=""
+    part_sto=0
+    part_efi=1
+    part_sys=0
+    part_emp=0
+    local message
 
-message=""
-# Check if we have any devices
-if [[ ${#removable_devices[@]} -eq 0 ]]; then
-    message="No removable USB devices found."
-    echo "$message"
-else
-    message="Choose a removable USB device:"
-    echo "Found devices:" "${!removable_devices[@]}"
-fi
-device=$(pick_device "$message")
-echo "Chosen device: ${device}"
+    while true; do
+        case $step in
+            1)
+                echo "Looking for connected devices."
+                find_devices
 
+                # Check if we have any devices
+                if [[ ${#removable_devices[@]} -eq 0 ]]; then
+                    message="No removable USB devices found."
+                    echo "$message"
+                else
+                    message="Choose a removable USB device:"
+                    echo "Found devices:" "${!removable_devices[@]}"
+                fi
 
-message="$(cat << EOF
-Would you like to create new partition table?
-\Z1WARNING!\Zn It will erase all data on the device.
-EOF
-)"
+                # Show dialog to choose a device
+                pick_device "$message"
+                handle_exit_code $?
+            ;;
+            2)
+                pick_partitions
+                handle_exit_code $?
+            ;;
+            3)
+                partitions_size
+                handle_exit_code $?
+            ;;
+            4)
+                echo "Finished."
+                break
+            ;;
+        esac
+    done
+}
 
-if dialog --keep-tite --colors \
-    --backtitle "$backtitle" \
-    --title "Partitioning" \
-    --yesno "${message}" 0 0
-then
-    partitions_setup
-else
-    echo "Not implemented"
-    app_exit
-fi
+main
