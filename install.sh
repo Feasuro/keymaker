@@ -105,7 +105,7 @@ function pick_device() {
     # Show menu dialog
     result=$(dialog --keep-tite --stdout \
         --backtitle "$backtitle" \
-        --title "Select USB Device." \
+        --title "Select USB Device" \
         --ok-label "Next" \
         --cancel-label "Exit" \
         --menu "$message" 15 60 6 \
@@ -151,11 +151,12 @@ function pick_partitions() {
     ret=$?
     # Process selection
     if [ $ret -eq 0 ]; then
+        partitions=(0 1 0 0)
         for opt in $result; do
             case $opt in
-                1) part_sys=1 ;;
-                2) part_sto=1 ;;
-                3) part_emp=1 ;;
+                1) partitions[2]=1 ;; # system
+                2) partitions[0]=1 ;; # storage
+                3) partitions[3]=1 ;; # free space
             esac
         done
     fi
@@ -164,60 +165,67 @@ function pick_partitions() {
 }
 
 function calculate_sizes() {
-    local dev_size ratio chunk
-    local size_sto size_efi size_sys size_emp
-    dev_size=$1
+    local ratio chunk
+    # TODO: get rid of sudo
+    dev_size="$(sudo blockdev --getsize64 "${1}")"
 
     # Default proportions:
-    ratio=$((2*part_sys+2*part_sto+part_emp))
+    ratio=$((2*partitions[0]+2*partitions[2]+partitions[3]))
     chunk=$(((dev_size - 51*1024*1024)/ratio))
 
-    size_sto=$(numfmt --to=iec-i $((2*chunk*part_sto)))
-    size_efi=$(numfmt --to=iec-i $((50*1024*1024)))
-    size_sys=$(numfmt --to=iec-i $((2*chunk*part_sys)))
-    size_emp=$(numfmt --to=iec-i $((chunk*part_emp)))
+    part_sizes[0]=$(numfmt --to=iec-i $((2*chunk*partitions[0])))
+    part_sizes[1]=$(numfmt --to=iec-i $((50*1024*1024*partitions[1])))
+    part_sizes[2]=$(numfmt --to=iec-i $((2*chunk*partitions[2])))
+    part_sizes[3]=$(numfmt --to=iec-i $((chunk*partitions[3])))
+}
 
-    echo "${size_sto} ${size_efi} ${size_sys} ${size_emp}"
+function adjust_sizes() {
+    echo "Not Implemented"
 }
 
 function partitions_size() {
-    local dev_size dialog_items count index
-
-    dev_size="$(sudo blockdev --getsize64 "${device}")"
+    local result dialog_items count index ret
 
     # Build dialog items
     dialog_items=()
     count=0
-    index=0
-    set -- $(calculate_sizes "$dev_size")
-    for part in "$part_sto" "$part_efi" "$part_sys" "$part_emp"; do
-        ((index+=1))
-        if [ "$part" -ne 0 ]; then
+    for index in {0..3}; do
+        if [ "${partitions[$index]}" -ne 0 ]; then
             ((count+=1))
-            dialog_items+=("${device}${count}" "$count" 1 "${!index}" "$count" 30 15 0)
+            dialog_items+=("${device}${count} ${part_names[$index]}" \
+                "$count" 1 "${part_sizes[$index]}" "$count" 30 15 0)
         fi
     done
+    # Remove /dev/sdxN before free space
+    [ "${partitions[3]}" -ne 0 ] && dialog_items[-8]="${part_names[3]}"
 
     # Show dialog
-    dialog --keep-tite --extra-button \
-    --backtitle "$backtitle" \
-    --title "Confirm " \
-    --ok-label "Next" \
-    --cancel-label "Exit" \
-    --extra-label "Back" \
-    --form "The following partitions will be created:" 20 60 4 \
-    "${dialog_items[@]}"
+    result=$(dialog --keep-tite --extra-button --stdout \
+        --backtitle "$backtitle" \
+        --title "Adjust partition sizes" \
+        --ok-label "Next" \
+        --cancel-label "Exit" \
+        --extra-label "Back" \
+        --form "The following partitions will be created:" 20 60 4 \
+        "${dialog_items[@]}"
+    )
+
+    ret=$?
+    # Process input
+    if [ $ret -eq 0 ]; then
+        echo "DEBUG: ${result}"
+    fi
+
+    return $ret
 }
 
 function main() {
     clear
-    step=1
+    declare step=1
     declare -A removable_devices
-    device=""
-    part_sto=0
-    part_efi=1
-    part_sys=0
-    part_emp=0
+    declare device dev_size
+    declare -a partitions part_sizes
+    declare -a part_names=("storage" "esp" "system" "free space")
     local message
 
     while true; do
@@ -242,6 +250,7 @@ function main() {
             2)
                 pick_partitions
                 handle_exit_code $?
+                calculate_sizes "$device"
             ;;
             3)
                 partitions_size
