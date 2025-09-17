@@ -231,7 +231,89 @@ EOF
 }
 
 function validate_sizes() {
-    echo "Not Implemented"
+    # validate_sizes  <size1> <size2> <size3> <size4>
+    #
+    #   Arguments are user‑supplied sizes expressed as IEC strings
+    #   (e.g. "2Gi", "500Mi", "1.5Ti").
+    #
+    # Globals expected:
+    #   dev_size      – total device size in sectors
+    #   sector        – sector size in bytes (e.g. 512)
+    #   partitions[]  – flag array (0 = disabled, 1 = enabled)
+    #   part_sizes[]  – current partition sizes (in sectors)
+    #   part_names[]  – human‑readable names for the UI (optional)
+    local available sum
+    local accepted=1
+    declare -a new_sizes min_sizes
+    min_sizes=(2147483648 10485760 5368709120 1073741824) #2Gi 10Mi 5Gi 1Gi
+    message=''
+
+    # assign new_sizes array with user input
+    for index in "${!partitions[@]}"; do
+        if (( partitions[index] == 0 )); then
+            new_sizes+=(0)
+            continue
+        fi
+        # check if iec strings match
+        [ "$1" != "$(numfmt --to=iec-i $((part_sizes[index] * sector)))" ] && accepted=0
+
+        new_sizes+=( $(( $(numfmt --from=iec-i "$1") / sector )) )
+        shift
+    done
+
+    if [ "$DEBUG" ]; then cat << EOF >&2
+DEBUG validate_sizes:
+    part_sizes = ${part_sizes[*]}
+    new_sizes  = ${new_sizes[*]}
+    accepted   = ${accepted}
+EOF
+    fi
+
+    # values were correct and accepted by user
+    if (( accepted == 1 )); then
+        return 0
+    fi
+
+    # check if sizes are greater than minimum
+    for index in "${!partitions[@]}"; do
+        (( min_sizes[index] /= sector ))
+        if (( partitions[index] == 1 && new_sizes[index] < min_sizes[index])); then
+            message+="\Z1${part_names[index]} was to small!\Zn\n"
+            new_sizes[index]=${min_sizes[index]}
+        fi
+    done
+
+    # calculate sum of partitions' sizes and available space
+    sum=0
+    for size in "${new_sizes[@]}"; do
+        ((sum+=size))
+    done
+    available=$((dev_size - 1024*1024/sector))
+
+    # if free space was chosen we try to adjust it
+    if (( partitions[3] == 1 )); then
+        if (( sum > available && sum - new_sizes[3] < available - min_sizes[3] )); then
+            [ "$DEBUG" ] && echo "   adjust free space down" >&2
+            (( new_sizes[3] -= sum - available ))
+            sum=$available
+        elif (( sum < available )); then
+            [ "$DEBUG" ] && echo "   adjust free space up" >&2
+            (( new_sizes[3] += available - sum ))
+            sum=$available
+        fi
+    fi
+
+    # if partitions don't fit recalculate sizes proportionally
+    if (( sum != available )); then
+        message+="\Z1Partitions scaled to fit disk size!\Zn\n"
+        # shellcheck disable=SC2068
+        calculate_sizes ${new_sizes[@]}
+        return 2
+    fi
+
+    # new sizes are correct
+    message+="\Z2Press next to accept changes.\Zn\n"
+    part_sizes=("${new_sizes[@]}")
     return 2
 }
 
@@ -253,13 +335,13 @@ function partitions_size() {
     ((partitions[3] == 1 )) && dialog_items[-8]="${part_names[3]}"
 
     # Show dialog
-    result=$(dialog --keep-tite --extra-button --stdout \
+    result=$(dialog --keep-tite --extra-button --colors --stdout \
         --backtitle "$BACKTITLE" \
         --title "Adjust partition sizes" \
         --ok-label "Next" \
         --cancel-label "Exit" \
         --extra-label "Back" \
-        --form "The following partitions will be created:" \
+        --form "${message}The following partitions will be created:" \
         20 60 4 "${dialog_items[@]}"
     )
 
