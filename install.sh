@@ -182,22 +182,57 @@ function pick_partitions() {
 }
 
 function calculate_sizes() {
-    local ratio chunk
-    # TODO: get rid of sudo
-    dev_size="$(sudo blockdev --getsize64 "${1}")"
+    # calculate_sizes  <w0> <fixed_sz> <w2> <w3>
+    #   $1 – weight for partition 0
+    #   $2 – absolute size (in sectors) for partition 1 (fixed)
+    #   $3 – weight for partition 2
+    #   $4 – weight for partition 3
+    #
+    # Globals expected:
+    #   dev_size      – total device size in sectors
+    #   sector        – sector size in bytes (e.g. 512)
+    #   partitions[]  – flag array (0 = disabled, 1 = enabled) for each slot
+    #   part_sizes[]  – array that will receive the calculated sizes
+    local reserved=$(( 1024 * 1024 / sector )) # 1MiB (sectors)
+    local available=$(( dev_size - reserved - $2 ))
+    local ratio=$(( $1 * partitions[0] + $3 * partitions[2] + $4 * partitions[3] ))
 
-    # Default proportions:
-    ratio=$((2*partitions[0]+2*partitions[2]+partitions[3]))
-    chunk=$(((dev_size - 51*1024*1024)/ratio))
+    if (( ratio == 0 )); then
+        [ "$DEBUG" ] && echo "DEBUG calculate_sizes: No partitions enabled (ratio = 0)." >&2
+        return 1
+    fi
 
-    part_sizes[0]=$(numfmt --to=iec-i $((2*chunk*partitions[0])))
-    part_sizes[1]=$(numfmt --to=iec-i $((50*1024*1024*partitions[1])))
-    part_sizes[2]=$(numfmt --to=iec-i $((2*chunk*partitions[2])))
-    part_sizes[3]=$(numfmt --to=iec-i $((chunk*partitions[3])))
+    part_sizes[0]=$(( $1 * available * partitions[0] / ratio ))
+    part_sizes[1]=$(( $2 * partitions[1] ))
+    part_sizes[2]=$(( $3 * available * partitions[2] / ratio ))
+    part_sizes[3]=$(( $4 * available * partitions[3] / ratio ))
+
+    # Distribute any remainder left from integer division
+    local remainder=$(( available - part_sizes[0] - part_sizes[2] - part_sizes[3] ))
+    local index=${#partitions[@]}
+    while (( remainder > 0 )); do
+        if (( partitions[index] == 1 && index != 1 )); then
+            (( part_sizes[index]++ ))
+            (( remainder-- ))
+        fi
+        (( index = ++index % ${#partitions[@]} ))
+    done
+
+    if [ "$DEBUG" ]; then cat << EOF >&2
+DEBUG calculate_sizes:
+    reserved   = ${reserved} sectors
+    available  = ${available} sectors
+    ratio      = ${ratio}
+    remainder  = ${remainder} sectors
+    part_sizes = (${part_sizes[0]}, ${part_sizes[1]}, ${part_sizes[2]}, ${part_sizes[3]})
+    sum(flex)  = $((part_sizes[0]+part_sizes[2]+part_sizes[3])) (should equal available)
+EOF
+    fi
 }
 
-function adjust_sizes() {
+function validate_sizes() {
     echo "Not Implemented"
+    return 2
 }
 
 function partitions_size() {
@@ -209,7 +244,7 @@ function partitions_size() {
     for index in "${!partitions[@]}"; do
         if (( partitions[index] == 1 )); then
             ((count++))
-            size=$(numfmt --to=iec-i $((part_sizes[index])))
+            size=$(numfmt --to=iec-i $((part_sizes[index] * sector)))
             dialog_items+=("${device}${count} ${part_names[$index]}" \
                 "$count" 1 "$size" "$count" 30 15 0)
         fi
@@ -231,7 +266,9 @@ function partitions_size() {
     ret=$?
     # Process input
     if [ $ret -eq 0 ]; then
-        [ $DEBUG ] && echo "DEBUG: ${result}" >&2
+        # shellcheck disable=SC2086
+        validate_sizes $result
+        (( ret += $? ))
     fi
 
     return $ret
@@ -241,7 +278,7 @@ function main() {
     clear
     declare step=1
     declare -A removable_devices
-    declare device dev_size
+    declare device dev_size sector
     declare -a partitions part_sizes
     declare -a part_names=("storage" "esp" "system" "free space")
     local message
@@ -257,7 +294,10 @@ function main() {
             2)
                 pick_partitions
                 handle_exit_code $?
-                calculate_sizes "$device"
+                # TODO: get rid of sudo
+                sector="$(sudo blockdev --getss "${device}")"
+                dev_size="$(sudo blockdev --getsz "${device}")"
+                calculate_sizes 2 $((52428800/sector)) 2 1
             ;;
             3)
                 partitions_size
