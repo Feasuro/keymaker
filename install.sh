@@ -1,34 +1,36 @@
 #!/bin/bash
 
-backtitle="Keymaker"
+BACKTITLE="Keymaker"
+DEBUG=1
 
 trap 'abort' INT
 
 function abort() {
-    echo "Application aborted."
+    echo "Application aborted." >&2
     exit 1
 }
 
 function app_exit() {
-    echo "Exiting."
+    echo "Exiting." >&2
     exit 0
 }
 
 function handle_exit_code() {
     # Actions of dialog buttons
     case $1 in
-        0) ((step+=1)) ;;
+        0) ((step++)) ;;
         1) app_exit ;;
-        2) echo "dupa dupa";;
-        3) ((step-=1)) ;;
+        2) ;;
+        3) ((step--)) ;;
         *) 
-            echo "Error: Unknown exit code - ${1}"
+            echo "Error: Unknown exit code - ${1}" >&2
             abort
         ;;
     esac
 }
 
 function find_devices() {
+    echo "Looking for connected devices." >&2
     local id_bus id_vendor id_model devname
     for sys_path in /sys/block/*; do
         # Reset variables for each iteration
@@ -60,11 +62,12 @@ function manual_dev_entry() {
 
     # Show dialog
     result=$(dialog --keep-tite --stdout \
-        --backtitle "$backtitle" \
+        --backtitle "$BACKTITLE" \
         --title "Enter device" \
         --inputbox "Enter device name (e.g. /dev/sdX)" 10 40
     )
-    [ "$?" -eq 0 ] || return 2
+    # shellcheck disable=SC2181
+    (( $? == 0 )) || return 2
 
     # Check if a block device was given
     if [ -b "$result" ]; then
@@ -75,7 +78,7 @@ function manual_dev_entry() {
             device="$result"
             return 0
         elif dialog --keep-tite \
-            --backtitle "$backtitle" \
+            --backtitle "$BACKTITLE" \
             --title "Warning" \
             --yesno "${result} appears to be ${devtype} not a disk.\nAre you sure you know what you are doing?" 10 40
             then
@@ -84,7 +87,7 @@ function manual_dev_entry() {
         fi
     else
         dialog --keep-tite \
-        --backtitle "$backtitle" \
+        --backtitle "$BACKTITLE" \
         --title "Error" \
         --msgbox "${result} is not a valid block device!" 10 40
     fi
@@ -93,7 +96,15 @@ function manual_dev_entry() {
 
 function pick_device() {
     local result message dialog_items ret
-    message="$1"
+
+    # Check if we have any devices
+    if [[ ${#removable_devices[@]} -eq 0 ]]; then
+        message="No removable USB devices found."
+        echo "$message" >&2
+    else
+        message="Choose a removable USB device:"
+        echo "Found devices:" "${!removable_devices[@]}" >&2
+    fi
 
     # Build dialog menu items
     dialog_items=()
@@ -104,7 +115,7 @@ function pick_device() {
 
     # Show menu dialog
     result=$(dialog --keep-tite --stdout \
-        --backtitle "$backtitle" \
+        --backtitle "$BACKTITLE" \
         --title "Select USB Device" \
         --ok-label "Next" \
         --cancel-label "Exit" \
@@ -125,7 +136,7 @@ function pick_device() {
         [ -n "$device" ] || return 2
     fi
 
-    echo "Chosen device: ${device}"
+    echo "Chosen device: ${device}" >&2
     return $ret
 }
 
@@ -138,27 +149,33 @@ function pick_partitions() {
     dialog_items+=(3 "Leave space for persistence partition(s)" off)
 
     # Show dialog
-    result=$(dialog --keep-tite --stdout --extra-button \
-        --backtitle "$backtitle" \
+    result=$(dialog --keep-tite --stdout --colors --extra-button \
+        --backtitle "$BACKTITLE" \
         --title "Select options" \
         --ok-label "Next" \
         --cancel-label "Exit" \
         --extra-label "Back" \
-        --checklist "Choose partitions to create:" 15 60 6 \
+        --checklist "${message}Choose partitions to create:" 15 60 6 \
         "${dialog_items[@]}"
     )
 
     ret=$?
     # Process selection
     if [ $ret -eq 0 ]; then
-        partitions=(0 1 0 0)
+        message=''
+        partitions=(0 0 0 0)
         for opt in $result; do
             case $opt in
-                1) partitions[2]=1 ;; # system
+                1) partitions[1]=1; partitions[2]=1 ;; # efi+system
                 2) partitions[0]=1 ;; # storage
                 3) partitions[3]=1 ;; # free space
             esac
         done
+
+        if (( partitions[0] + partitions[1] + partitions[2] == 0 )); then
+            message="\Z1No partitions to create!\Zn\n"
+            ret=2
+        fi
     fi
 
     return $ret
@@ -184,36 +201,37 @@ function adjust_sizes() {
 }
 
 function partitions_size() {
-    local result dialog_items count index ret
+    local result dialog_items count size ret
 
     # Build dialog items
     dialog_items=()
     count=0
-    for index in {0..3}; do
-        if [ "${partitions[$index]}" -ne 0 ]; then
-            ((count+=1))
+    for index in "${!partitions[@]}"; do
+        if (( partitions[index] == 1 )); then
+            ((count++))
+            size=$(numfmt --to=iec-i $((part_sizes[index])))
             dialog_items+=("${device}${count} ${part_names[$index]}" \
-                "$count" 1 "${part_sizes[$index]}" "$count" 30 15 0)
+                "$count" 1 "$size" "$count" 30 15 0)
         fi
     done
     # Remove /dev/sdxN before free space
-    [ "${partitions[3]}" -ne 0 ] && dialog_items[-8]="${part_names[3]}"
+    ((partitions[3] == 1 )) && dialog_items[-8]="${part_names[3]}"
 
     # Show dialog
     result=$(dialog --keep-tite --extra-button --stdout \
-        --backtitle "$backtitle" \
+        --backtitle "$BACKTITLE" \
         --title "Adjust partition sizes" \
         --ok-label "Next" \
         --cancel-label "Exit" \
         --extra-label "Back" \
-        --form "The following partitions will be created:" 20 60 4 \
-        "${dialog_items[@]}"
+        --form "The following partitions will be created:" \
+        20 60 4 "${dialog_items[@]}"
     )
 
     ret=$?
     # Process input
     if [ $ret -eq 0 ]; then
-        echo "DEBUG: ${result}"
+        [ $DEBUG ] && echo "DEBUG: ${result}" >&2
     fi
 
     return $ret
@@ -231,20 +249,9 @@ function main() {
     while true; do
         case $step in
             1)
-                echo "Looking for connected devices."
                 find_devices
-
-                # Check if we have any devices
-                if [[ ${#removable_devices[@]} -eq 0 ]]; then
-                    message="No removable USB devices found."
-                    echo "$message"
-                else
-                    message="Choose a removable USB device:"
-                    echo "Found devices:" "${!removable_devices[@]}"
-                fi
-
                 # Show dialog to choose a device
-                pick_device "$message"
+                pick_device
                 handle_exit_code $?
             ;;
             2)
@@ -257,7 +264,7 @@ function main() {
                 handle_exit_code $?
             ;;
             4)
-                echo "Finished."
+                echo "Finished." >&2
                 break
             ;;
         esac
