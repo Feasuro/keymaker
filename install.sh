@@ -15,6 +15,24 @@ function app_exit() {
     exit 0
 }
 
+require_root() {
+    # If we are already uid 0 (root) there is nothing to do
+    [[ $(id -u) -eq 0 ]] && return 0
+
+    # Prefer sudo
+    if command -v sudo >/dev/null 2>&1; then
+        echo "Requesting root privileges via sudo..." >&2
+        exec sudo "$0" "$@"
+    # Fallback to pkexec
+    elif command -v pkexec >/dev/null 2>&1; then
+        echo "Requesting root privileges via pkexec..." >&2
+        exec pkexec "$0" "$@"
+    else
+        echo "Error: neither sudo nor pkexec is available. Cannot obtain root." >&2
+        abort
+    fi
+}
+
 function handle_exit_code() {
     # Actions of dialog buttons
     case $1 in
@@ -357,7 +375,7 @@ function partitions_size() {
 }
 
 function main() {
-    clear
+    require_root "$@"
     declare step=1
     declare -A removable_devices
     declare device dev_size sector
@@ -376,9 +394,8 @@ function main() {
             2)
                 pick_partitions
                 handle_exit_code $?
-                # TODO: get rid of sudo
-                sector="$(sudo blockdev --getss "${device}")"
-                dev_size="$(sudo blockdev --getsz "${device}")"
+                sector="$(blockdev --getss "${device}")"
+                dev_size="$(blockdev --getsz "${device}")"
                 calculate_sizes 2 $((52428800/sector)) 2 1
             ;;
             3)
@@ -393,4 +410,4 @@ function main() {
     done
 }
 
-main
+main "$@"
