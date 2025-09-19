@@ -9,6 +9,7 @@ trap 'abort' INT
 trap 'abort' TERM
 
 abort() {
+    rm -f "$tmpfile"
     echo "Application aborted." >&2
     exit 1
 }
@@ -24,11 +25,11 @@ require_root() {
 
     # Prefer sudo
     if command -v sudo >/dev/null 2>&1; then
-        echo "Requesting root privileges via sudo..." >&2
+        echo "INFO require_root: Requesting root privileges via sudo." >&2
         exec sudo -E "$0" "$@"
     # Fallback to pkexec
     elif command -v pkexec >/dev/null 2>&1; then
-        echo "Requesting root privileges via pkexec..." >&2
+        echo "INFO require_root: Requesting root privileges via pkexec." >&2
         exec pkexec "$0" "$@"
     else
         echo "Error: neither sudo nor pkexec is available. Cannot obtain root." >&2
@@ -57,7 +58,7 @@ find_devices() {
     # Requirements (set in the caller):
     #   removable_devices[] – associative array
     #   DEBUG               – extra diagnostics
-    echo "Looking for connected devices." >&2
+    echo "INFO find_devices: Looking for connected devices." >&2
     local sys_path id_bus id_vendor id_model devname label
     for sys_path in /sys/block/*; do
         # Reset variables for each iteration
@@ -73,7 +74,7 @@ find_devices() {
         done < <(udevadm info --query=property --no-pager --path="$sys_path" 2>/dev/null)
 
         # Skip if it's not a USB device or devname is missing
-        if [[ "$id_bus" != "usb" || -z "$devname" ]]; then
+        if [[ "$id_bus" != 'usb' || -z "$devname" ]]; then
             continue
         fi
 
@@ -138,10 +139,10 @@ pick_device() {
     # Check if we have any devices
     if [[ ${#removable_devices[@]} -eq 0 ]]; then
         message="No removable USB devices found."
-        echo "$message" >&2
+        echo "INFO pick_device: ${message}" >&2
     else
         message="Choose a removable USB device:"
-        echo "Found devices:" "${!removable_devices[@]}" >&2
+        echo "INFO pick_device: Found devices ->" "${!removable_devices[@]}" >&2
     fi
 
     # Build dialog menu items
@@ -157,7 +158,7 @@ pick_device() {
         --title "Select USB Device" \
         --ok-label "Next" \
         --cancel-label "Exit" \
-        --menu "$message" 15 60 6 \
+        --menu "$message" 20 60 6 \
         "${dialog_items[@]}"
         )
 
@@ -174,7 +175,7 @@ pick_device() {
         [[ -n $device ]] || ret=2
     fi
 
-    echo "Chosen device: ${device}" >&2
+    echo "INFO pick_device: Chosen device -> ${device}" >&2
     handle_exit_code $ret
 }
 
@@ -194,7 +195,7 @@ pick_partitions() {
         --ok-label "Next" \
         --cancel-label "Exit" \
         --extra-label "Back" \
-        --checklist "${message}Choose partitions to create:" 15 60 6 \
+        --checklist "${message}Choose partitions to create:" 20 60 6 \
         "${dialog_items[@]}"
     )
 
@@ -222,14 +223,14 @@ pick_partitions() {
 
 set_partition_vars() {
     # populate variables with device info and partitioning scheme
-    local dev_size offset index
+    local dev_size index
 
     if ! sector_size="$(blockdev --getss "${device}")"; then
-        echo "ERROR: ${device} is inaccessible" >&2
+        echo "ERROR set_partition_vars: ${device} is inaccessible" >&2
         abort
     fi
     if ! dev_size="$(blockdev --getsz "${device}")"; then
-        echo "ERROR: ${device} is inaccessible" >&2
+        echo "ERROR set_partition_vars: ${device} is inaccessible" >&2
         abort
     fi
 
@@ -419,12 +420,102 @@ set_partitions_size() {
     handle_exit_code $ret
 }
 
+assemble_sfdisk_input() {
+    # Requirements (set in the caller):
+    #   offset       – offset in sectors (1MiB)
+    #   partitions   – array[0..3] with 0/1 flags indicating which
+    #                  partitions to create (index = partition‑number‑1)
+    #   part_sizes   – array[0..3] with sizes (in sectors) for each partition
+    #   part_names   – array[0..3] with GPT partition labels
+    local start index guid
+
+    # tell sfdisk we want a fresh GPT table
+    printf "label: gpt\nunit: sectors\n"
+
+    # Start allocating partitions after offset (first MiB)
+    start=$offset
+
+    for index in "${!partitions[@]}"; do
+        (( partitions[index] )) || continue # skip if flag == 0
+
+        # Choose the proper GPT type GUID
+        case $index in
+            0) guid="EBD0A0A2-B9E5-4433-87C0-68B6B72699C7" ;; # Microsoft basic data
+            1) guid="C12A7328-F81F-11D2-BA4B-00A0C93EC93B" ;; # EFI System Partition
+            2) guid="0FC63DAF-8483-4772-8E79-3D69D8477DE4" ;; # Linux filesystem
+            3) continue ;; # free space
+        esac
+
+        # Print the partition definition line
+        printf 'start=%s,size=%s,type=%s,name="%s"\n' \
+            "$start" "${part_sizes[$index]}" "$guid" "${part_names[$index]}"
+
+        (( start += part_sizes[index] ))
+    done
+}
+
+format_device() {
+    local ret
+    local input="$1"
+    local -a cmd
+
+    cmd=( sfdisk --wipe always "$device" "<${input}" )
+
+    if [[ $2 == 'noact' ]]; then
+        cmd+=( --no-act '2>&1' )
+    elif [ "$DEBUG" ]; then
+        cmd+=( '1>&2' )
+        echo "INFO format_device: Executing -> ${cmd[*]}" >&2
+    else
+        cmd+=( '>/dev/null' '2>&1' )
+    fi
+
+    # shellcheck disable=SC2294
+    eval "${cmd[@]}"
+
+    ret=$?
+    if (( ret != 0 )); then
+        echo "ERROR format_device: sfdisk returned ${ret}" >&2
+        abort
+    fi
+}
+
+confirm_format() {
+    local tmpfile message ret
+    local -a cmd
+
+    tmpfile=$(mktemp /tmp/sfdisk.XXXXXX)
+    assemble_sfdisk_input > "$tmpfile"
+
+    message=$(
+        printf "\Z1\ZbProceeding will erase all data on the device!\ZB\Zn\n\n"
+        format_device "$tmpfile" 'noact'
+    )
+
+    dialog --keep-tite --colors --no-collapse --extra-button \
+        --backtitle "$BACKTITLE" \
+        --title "Confirm partitioning scheme" \
+        --yes-label "Next" \
+        --no-label "Exit" \
+        --extra-label "Back" \
+        --yesno "${message}" 30 90
+
+    ret=$?
+    # Process input
+    if (( ret == 0 )); then
+        format_device "$tmpfile"
+    fi
+
+    rm -f "$tmpfile"
+    handle_exit_code $ret
+}
+
 main() {
     require_root "$@"
 
     local step=1
     local -A removable_devices
-    local message device sector_size usable_size 
+    local message device sector_size offset usable_size 
     local -a partitions part_sizes part_names min_sizes
 
     message=''
@@ -443,6 +534,9 @@ main() {
                 set_partitions_size
                 ;;
             4)
+                confirm_format
+                ;;
+            5)
                 echo "Finished." >&2
                 break
                 ;;
