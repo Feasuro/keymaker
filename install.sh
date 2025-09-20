@@ -40,10 +40,10 @@ require_root() {
 handle_exit_code() {
     # Actions of dialog buttons
     case $1 in
-        0) ((step++)) ;;
+        0) (( step++ )) ;;
         1) app_exit ;;
         2) ;;
-        3) ((step--)) ;;
+        3) (( step-- )) ;;
         *) 
             echo "Error: Unknown exit code - ${1}" >&2
             abort
@@ -223,7 +223,7 @@ pick_partitions() {
 
 set_partition_vars() {
     # populate variables with device info and partitioning scheme
-    local dev_size index
+    local dev_size index number
 
     if ! sector_size="$(blockdev --getss "${device}")"; then
         echo "ERROR set_partition_vars: ${device} is inaccessible" >&2
@@ -238,11 +238,21 @@ set_partition_vars() {
     usable_size=$(( dev_size - offset - GPT_BACKUP_SECTORS )) # last sectors for gpt table backup
     # gpt partition names
     part_names=('storage' 'esp' 'system' 'free space')
+
     # define minimal partition sizes in bytes
     min_sizes=(2147483648 10485760 5368709120 1073741824) #2Gi 10Mi 5Gi 1Gi
     # convert min_sizes to sectors
     for index in "${!min_sizes[@]}"; do
         (( min_sizes[index] /= sector_size ))
+    done
+
+    part_nodes=('' '' '' '')
+    number=1
+    # walk through all indices but the last (free space)
+    for (( index = 0; index < ${#part_nodes[@]}-1; index++)); do
+        (( partitions[index] )) || continue
+        part_nodes[index]="${device}${number}"
+        (( number++ ))
     done
 
     # populate part_sizes with default weights (50MiB for part 2)
@@ -279,7 +289,7 @@ calculate_sizes() {
     remainder=$(( available - part_sizes[0] - part_sizes[2] - part_sizes[3] ))
     index=${#partitions[@]}
     while (( remainder > 0 )); do
-        if (( partitions[index] == 1 && index != 1 )); then
+        if (( partitions[index] && index != 1 )); then
             (( part_sizes[index]++ ))
             (( remainder-- ))
         fi
@@ -317,7 +327,7 @@ validate_sizes() {
 
     # assign new_sizes array with user input
     for index in "${!partitions[@]}"; do
-        if (( partitions[index] == 0 )); then
+        if (( ! partitions[index] )); then
             new_sizes+=(0)
             continue
         fi
@@ -341,7 +351,7 @@ EOF
 
     # check if sizes are greater than minimum
     for index in "${!partitions[@]}"; do
-        if (( partitions[index] == 1 && new_sizes[index] < min_sizes[index])); then
+        if (( partitions[index] && new_sizes[index] < min_sizes[index])); then
             message+="\Z1${part_names[index]} was to small!\Zn\n"
             new_sizes[index]=${min_sizes[index]}
         fi
@@ -354,7 +364,7 @@ EOF
     done
 
     # if free space was chosen we try to adjust it
-    if (( partitions[3] == 1 )); then
+    if (( partitions[3] )); then
         if (( sum > usable_size && sum - new_sizes[3] < usable_size - min_sizes[3] )); then
             [ "$DEBUG" ] && echo "   adjust free space down" >&2
             (( new_sizes[3] -= sum - usable_size ))
@@ -388,15 +398,15 @@ set_partitions_size() {
     dialog_items=()
     count=0
     for index in "${!partitions[@]}"; do
-        if (( partitions[index] == 1 )); then
-            ((count++))
+        if (( partitions[index] )); then
+            (( count++ ))
             size=$(numfmt --to=iec-i $((part_sizes[index] * sector_size)))
             dialog_items+=("${device}${count} ${part_names[$index]}" \
                 "$count" 1 "$size" "$count" 30 15 0)
         fi
     done
     # Remove /dev/sdxN before free space
-    ((partitions[3] == 1 )) && dialog_items[-8]="${part_names[3]}"
+    (( partitions[3] )) && dialog_items[-8]="${part_names[3]}"
 
     # Show dialog
     result=$(dialog --keep-tite --extra-button --colors --stdout \
@@ -430,7 +440,15 @@ assemble_sfdisk_input() {
     local start index guid
 
     # tell sfdisk we want a fresh GPT table
-    printf "label: gpt\nunit: sectors\n"
+    cat << EOF
+label: gpt
+device: ${device}
+unit: sectors
+sector-size: ${sector_size}
+first-lba: ${offset}
+last-lba: $(( offset + usable_size - 1 ))
+
+EOF
 
     # Start allocating partitions after offset (first MiB)
     start=$offset
@@ -447,7 +465,7 @@ assemble_sfdisk_input() {
         esac
 
         # Print the partition definition line
-        printf 'start=%s,size=%s,type=%s,name="%s"\n' \
+        printf '%s:start=%s,size=%s,type=%s,name="%s"\n' "${part_nodes[$index]}" \
             "$start" "${part_sizes[$index]}" "$guid" "${part_names[$index]}"
 
         (( start += part_sizes[index] ))
@@ -459,7 +477,7 @@ format_device() {
     local input="$1"
     local -a cmd
 
-    cmd=( sfdisk --wipe always "$device" "<${input}" )
+    cmd=( sfdisk --wipe always --wipe-partitions always "$device" "<${input}" )
 
     if [[ $2 == 'noact' ]]; then
         cmd+=( --no-act '2>&1' )
@@ -478,6 +496,7 @@ format_device() {
         echo "ERROR format_device: sfdisk returned ${ret}" >&2
         abort
     fi
+    return $ret
 }
 
 confirm_format() {
@@ -504,10 +523,34 @@ confirm_format() {
     # Process input
     if (( ret == 0 )); then
         format_device "$tmpfile"
+        make_filesystems
     fi
 
     rm -f "$tmpfile"
     handle_exit_code $ret
+}
+
+make_filesystems() {
+    local index label
+
+    for index in "${!part_nodes[@]}"; do
+        [[ -n ${part_nodes[index]} ]] || continue
+        case $index in
+            0)
+                label=${removable_devices[$device]:-'Data'}
+                mkfs.exfat -L "${label%% *}" "${part_nodes[$index]}"
+                ;; # storage
+            1)
+                mkfs.fat -n 'EFI' "${part_nodes[$index]}"
+                ;; # esp
+            2)
+                mkfs.ext4 -F -L 'casper-rw' "${part_nodes[$index]}"
+                ;; # system
+            3)
+                continue
+                ;; # free space
+        esac
+    done
 }
 
 main() {
