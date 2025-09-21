@@ -1,31 +1,33 @@
 #!/bin/bash
 
 # ----------------------------------------------------------------------
-# Global configuration
+# Global variables
 # ----------------------------------------------------------------------
-BACKTITLE="Keybuilder" # application name.
-VERSION="0.1"
-DEBUG=${DEBUG:-1} # if not-null causes app to print verbose messages to `stderr`.
+BACKTITLE="Keybuilder" # program name.
+VERSION="0.1"          # program version
+DEBUG=${DEBUG:-1}  # if not-null causes app to print verbose messages to `stderr`.
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" # installation directory.
-GLOBAL_CONFIG_FILE="/etc/keybuilder.conf" # location of configuration file
+GLOBAL_CONFIG_FILE="/etc/keybuilder.conf"        # location of configuration file.
 USER_CONFIG_FILE="${XDG_CONFIG_HOME:-"${HOME}/.config"}/keybuilder.conf" # as above (per user)
 
 # ----------------------------------------------------------------------
-# Modules
+# Configuration & modules
 # ----------------------------------------------------------------------
 if [[ -f $GLOBAL_CONFIG_FILE ]]; then
-    source $GLOBAL_CONFIG_FILE
+   source "$GLOBAL_CONFIG_FILE"
 elif [[ -f "${BASE_DIR}/config.sh" ]]; then
-    source "${BASE_DIR}/config.sh"
+   source "${BASE_DIR}/config.sh"
 else
-    echo "ERROR: Couldn't find configuration file." >&2
-    exit 1
+   echo "ERROR: Couldn't find configuration file." >&2
+   exit 1
 fi
+
 if [[ -f $USER_CONFIG_FILE ]]; then
-    source $USER_CONFIG_FILE
+   source "$USER_CONFIG_FILE"
 fi
+
 for module in "${BASE_DIR}/modules/"*.sh; do
-    source "$module"
+   source "$module"
 done
 
 # ----------------------------------------------------------------------
@@ -56,13 +58,13 @@ done
 #   * Runs program loop.
 # ----------------------------------------------------------------------
 main() {
-    require_root "$@"
+   require_root "$@"
 
-    local step message device sector_size offset usable_size 
-    local -a partitions part_sizes part_names min_sizes part_nodes
-    local -A removable_devices
+   local step message device sector_size offset usable_size 
+   local -a partitions part_sizes part_names min_sizes part_nodes
+   local -A removable_devices
 
-    run_loop
+   run_loop
 }
 
 main "$@"

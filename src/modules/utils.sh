@@ -16,39 +16,39 @@ UTILS_SH_INCLUDED=1
 # Returns: nothing (populates the global array).
 # ----------------------------------------------------------------------
 find_devices() {
-    echo "INFO find_devices: Looking for connected devices." >&2
-    local sys_path id_bus id_vendor id_model devname label
-    for sys_path in /sys/block/*; do
-        # Reset variables for each iteration
-        id_bus='' id_vendor='' id_model='' devname=''
-        # Parse known keys
-        while IFS='=' read -r key value; do
-            case "$key" in
-                ID_BUS) id_bus="$value" ;;
-                ID_VENDOR) id_vendor="$value" ;;
-                ID_MODEL) id_model="$value" ;;
-                DEVNAME) devname="$value" ;;
-            esac
-        done < <(udevadm info --query=property --no-pager --path="$sys_path" 2>/dev/null)
+   echo "INFO find_devices: Looking for connected devices." >&2
+   local sys_path id_bus id_vendor id_model devname label
+   for sys_path in /sys/block/*; do
+      # Reset variables for each iteration
+      id_bus='' id_vendor='' id_model='' devname=''
+      # Parse known keys
+      while IFS='=' read -r key value; do
+         case "$key" in
+            ID_BUS) id_bus="$value" ;;
+            ID_VENDOR) id_vendor="$value" ;;
+            ID_MODEL) id_model="$value" ;;
+            DEVNAME) devname="$value" ;;
+         esac
+      done < <(udevadm info --query=property --no-pager --path="$sys_path" 2>/dev/null)
 
-        # Skip if it's not a USB device or devname is missing
-        if [[ "$id_bus" != 'usb' || -z "$devname" ]]; then
-            continue
-        fi
+      # Skip if it's not a USB device or devname is missing
+      if [[ "$id_bus" != 'usb' || -z "$devname" ]]; then
+         continue
+      fi
 
-        # Skip read-only devices
-        if [[ -f "$sys_path/ro" && $(<"$sys_path/ro") -eq 1 ]]; then
-            [ "$DEBUG" ] && echo "DEBUG find_devices: ${devname} is read-only, skipping." >&2
-            continue
-        fi
+      # Skip read-only devices
+      if [[ -f "$sys_path/ro" && $(<"$sys_path/ro") -eq 1 ]]; then
+         [ "$DEBUG" ] && echo "DEBUG find_devices: ${devname} is read-only, skipping." >&2
+         continue
+      fi
 
-        # Sanitize: collapse whitespace in vendor/model string
-        label="$(printf '%s %s' "$id_vendor" "$id_model" | tr -s '[:space:]' ' ')"
-        # Only store safe device names (match /dev/sd[a-z]*)
-        if [[ "$devname" =~ ^/dev/sd[a-z]+$ ]]; then
+      # Sanitize: collapse whitespace in vendor/model string
+      label="$(printf '%s %s' "$id_vendor" "$id_model" | tr -s '[:space:]' ' ')"
+      # Only store safe device names (match /dev/sd[a-z]*)
+      if [[ "$devname" =~ ^/dev/sd[a-z]+$ ]]; then
             removable_devices["$devname"]="$label"
-        fi
-    done
+      fi
+   done
 }
 
 # ----------------------------------------------------------------------
@@ -60,6 +60,17 @@ find_devices() {
 # Globals used:
 #   GPT_BACKUP_SECTORS – number of sectors consumed by GPT table backup
 #   PART_TABLE_OFFSET  – protected space at the beginning of disk (in bytes)
+#   DEFAULT_STORAGE_NAME   – dafault GPT partition name for storage partition
+#   DEFAULT_ESP_NAME       – dafault GPT partition name for esp partition
+#   DEFAULT_SYSTEM_NAME    – dafault GPT partition name for system partition
+#   DEFAULT_ESP_SIZE       – default esp partition size (in bytes)
+#   DEFAULT_STORAGE_WEIGHT – default weight of storage partition size
+#   DEFAULT_SYSTEM_WEIGHT  – default weight of system partition size
+#   DEFAULT_FREE_WEIGHT    – default weight of free space size
+#   MIN_STORAGE_SIZE   – minimal size of storage partition
+#   MIN_ESP_SIZE       – minimal size of esp partition
+#   MIN_SYSTEM_SIZE    – minimal size of system partition
+#   MIN_FREE_SIZE      – minimal size of free space
 # Variables used/set:
 #   device             – selected block device (e.g. /dev/sdb)
 #   sector_size        – bytes per sector (from `blockdev --getss`)
@@ -75,41 +86,42 @@ find_devices() {
 #   1 – error,
 # ----------------------------------------------------------------------
 set_partition_vars() {
-    local dev_size index number
+   local dev_size index number
 
-    # gpt partition names
-    part_names=('storage' 'esp' 'system' 'free space')
+   # gpt partition names
+   part_names=("$DEFAULT_STORAGE_NAME" "$DEFAULT_ESP_NAME" "$DEFAULT_SYSTEM_NAME" "free space")
 
-    if ! dev_size="$(blockdev --getsz "${device}")"; then
-        echo "ERROR set_partition_vars: ${device} is inaccessible" >&2
-        abort
-    fi
-    if ! sector_size="$(blockdev --getss "${device}")"; then
-        echo "ERROR set_partition_vars: ${device} is inaccessible" >&2
-        abort
-    fi
+   if ! dev_size="$(blockdev --getsz "${device}")"; then
+      echo "ERROR set_partition_vars: ${device} is inaccessible" >&2
+      abort
+   fi
+   if ! sector_size="$(blockdev --getss "${device}")"; then
+      echo "ERROR set_partition_vars: ${device} is inaccessible" >&2
+      abort
+   fi
 
-    offset=$(( PART_TABLE_OFFSET / sector_size )) # first 1MiB (sectors)
-    usable_size=$(( dev_size - offset - GPT_BACKUP_SECTORS )) # last sectors for gpt table backup
+   offset=$(( PART_TABLE_OFFSET / sector_size )) # first 1MiB (sectors)
+   usable_size=$(( dev_size - offset - GPT_BACKUP_SECTORS )) # last sectors for gpt table backup
 
-    # define minimal partition sizes in bytes
-    min_sizes=(2147483648 10485760 5368709120 1073741824) #2Gi 10Mi 5Gi 1Gi
-    # convert min_sizes to sectors
-    for index in "${!min_sizes[@]}"; do
-        (( min_sizes[index] /= sector_size ))
-    done
+   # define minimal partition sizes in bytes
+   min_sizes=( "$MIN_STORAGE_SIZE" "$MIN_ESP_SIZE" "$MIN_SYSTEM_SIZE" "$MIN_FREE_SIZE" )
+   # convert min_sizes to sectors
+   for index in "${!min_sizes[@]}"; do
+      (( min_sizes[index] /= sector_size ))
+   done
 
-    part_nodes=('' '' '' '')
-    number=1
-    # walk through all indices but the last (free space)
-    for (( index = 0; index < ${#part_nodes[@]}-1; index++)); do
-        (( partitions[index] )) || continue
-        part_nodes[index]="${device}${number}"
-        (( number++ ))
-    done
+   part_nodes=('' '' '' '')
+   number=1
+   # walk through all indices but the last (free space)
+   for (( index = 0; index < ${#part_nodes[@]}-1; index++)); do
+      (( partitions[index] )) || continue
+      part_nodes[index]="${device}${number}"
+      (( number++ ))
+   done
 
-    # populate part_sizes with default weights and 50MiB for part 2
-    calculate_sizes 2 $(( 52428800 / sector_size )) 2 1
+   # populate part_sizes with default weights and 50MiB for part 2
+   calculate_sizes "$DEFAULT_STORAGE_WEIGHT" $(( DEFAULT_ESP_SIZE / sector_size )) \
+      "$DEFAULT_SYSTEM_WEIGHT" "$DEFAULT_FREE_WEIGHT"
 }
 
 # ----------------------------------------------------------------------
@@ -130,41 +142,41 @@ set_partition_vars() {
 #   1 – no flexible partitions enabled (ratio = 0),
 # ----------------------------------------------------------------------
 calculate_sizes() {
-    local available ratio remainder index
+   local available ratio remainder index
 
-    available=$(( usable_size - $2 ))
+   available=$(( usable_size - $2 ))
     ratio=$(( $1 * partitions[0] + $3 * partitions[2] + $4 * partitions[3] ))
 
-    if (( ratio == 0 )); then
-        [ "$DEBUG" ] && echo "DEBUG calculate_sizes: No partitions enabled (ratio = 0)." >&2
-        return 1
-    fi
+   if (( ratio == 0 )); then
+      [ "$DEBUG" ] && echo "DEBUG calculate_sizes: No partitions enabled (ratio = 0)." >&2
+      return 1
+   fi
 
-    part_sizes[0]=$(( $1 * available * partitions[0] / ratio ))
-    part_sizes[1]=$(( $2 * partitions[1] ))
-    part_sizes[2]=$(( $3 * available * partitions[2] / ratio ))
-    part_sizes[3]=$(( $4 * available * partitions[3] / ratio ))
+   part_sizes[0]=$(( $1 * available * partitions[0] / ratio ))
+   part_sizes[1]=$(( $2 * partitions[1] ))
+   part_sizes[2]=$(( $3 * available * partitions[2] / ratio ))
+   part_sizes[3]=$(( $4 * available * partitions[3] / ratio ))
 
-    # Distribute any remainder left from integer division
-    remainder=$(( available - part_sizes[0] - part_sizes[2] - part_sizes[3] ))
-    index=${#partitions[@]}
-    while (( remainder > 0 )); do
-        if (( partitions[index] && index != 1 )); then
+   # Distribute any remainder left from integer division
+   remainder=$(( available - part_sizes[0] - part_sizes[2] - part_sizes[3] ))
+   index=${#partitions[@]}
+   while (( remainder > 0 )); do
+      if (( partitions[index] && index != 1 )); then
             (( part_sizes[index]++ ))
             (( remainder-- ))
-        fi
-        (( index = ++index % ${#partitions[@]} ))
-    done
+      fi
+      (( index = ++index % ${#partitions[@]} ))
+   done
 
-    if [ "$DEBUG" ]; then cat << EOF >&2
+   if [ "$DEBUG" ]; then cat << EOF >&2
 DEBUG calculate_sizes:
-    available  = ${available} sectors
-    ratio      = ${ratio}
-    remainder  = ${remainder} sectors
-    part_sizes = (${part_sizes[0]}, ${part_sizes[1]}, ${part_sizes[2]}, ${part_sizes[3]})
-    sum(flex)  = $((part_sizes[0]+part_sizes[2]+part_sizes[3])) (should equal available)
+   available  = ${available} sectors
+   ratio      = ${ratio}
+   remainder  = ${remainder} sectors
+   part_sizes = (${part_sizes[0]}, ${part_sizes[1]}, ${part_sizes[2]}, ${part_sizes[3]})
+   sum(flex)  = $((part_sizes[0]+part_sizes[2]+part_sizes[3])) (should equal available)
 EOF
-    fi
+   fi
 }
 
 # ----------------------------------------------------------------------
@@ -187,75 +199,75 @@ EOF
 #   2 – sizes were adjusted; caller should treat this as “changes made”.
 # ----------------------------------------------------------------------
 validate_sizes() {
-    local sum index size accepted
-    local -a new_sizes
-    message=''
-    IFS=' '
-    accepted=1
+   local sum index size accepted
+   local -a new_sizes
+   message=''
+   IFS=' '
+   accepted=1
 
-    # assign new_sizes array with user input
-    for index in "${!partitions[@]}"; do
-        if (( ! partitions[index] )); then
-            new_sizes+=(0)
-            continue
-        fi
-        # check if iec strings match
-        [ "$1" == "$(numfmt --to=iec-i $((part_sizes[index] * sector_size)))" ] || accepted=0
+   # assign new_sizes array with user input
+   for index in "${!partitions[@]}"; do
+      if (( ! partitions[index] )); then
+         new_sizes+=(0)
+         continue
+      fi
+      # check if iec strings match
+      [ "$1" == "$(numfmt --to=iec-i $((part_sizes[index] * sector_size)))" ] || accepted=0
 
-        new_sizes+=( $(( $(numfmt --from=iec-i "$1") / sector_size )) )
-        shift
-    done
+      new_sizes+=( $(( $(numfmt --from=iec-i "$1") / sector_size )) )
+      shift
+   done
 
-    if [ "$DEBUG" ]; then cat << EOF >&2
+   if [ "$DEBUG" ]; then cat << EOF >&2
 DEBUG validate_sizes:
-    part_sizes = ${part_sizes[*]}
-    new_sizes  = ${new_sizes[*]}
-    accepted   = ${accepted}
+   part_sizes = ${part_sizes[*]}
+   new_sizes  = ${new_sizes[*]}
+   accepted   = ${accepted}
 EOF
-    fi
+   fi
 
-    # values were correct and accepted by user
-    (( accepted )) && return 0
+   # values were correct and accepted by user
+   (( accepted )) && return 0
 
-    # check if sizes are greater than minimum
-    for index in "${!partitions[@]}"; do
-        if (( partitions[index] && new_sizes[index] < min_sizes[index])); then
-            message+="\Z1${part_names[index]} was to small!\Zn\n"
-            new_sizes[index]=${min_sizes[index]}
-        fi
-    done
+   # check if sizes are greater than minimum
+   for index in "${!partitions[@]}"; do
+      if (( partitions[index] && new_sizes[index] < min_sizes[index])); then
+         message+="\Z1${part_names[index]} was to small!\Zn\n"
+         new_sizes[index]=${min_sizes[index]}
+      fi
+   done
 
-    # calculate sum of partitions' sizes
-    sum=0
-    for size in "${new_sizes[@]}"; do
-        ((sum+=size))
-    done
+   # calculate sum of partitions' sizes
+   sum=0
+   for size in "${new_sizes[@]}"; do
+      ((sum+=size))
+   done
 
-    # if free space was chosen we try to adjust it
-    if (( partitions[3] )); then
-        if (( sum > usable_size && sum - new_sizes[3] < usable_size - min_sizes[3] )); then
-            [ "$DEBUG" ] && echo "   adjust free space down" >&2
-            (( new_sizes[3] -= sum - usable_size ))
-            sum=$usable_size
-        elif (( sum < usable_size )); then
-            [ "$DEBUG" ] && echo "   adjust free space up" >&2
-            (( new_sizes[3] += usable_size - sum ))
-            sum=$usable_size
-        fi
-    fi
+   # if free space was chosen we try to adjust it
+   if (( partitions[3] )); then
+      if (( sum > usable_size && sum - new_sizes[3] < usable_size - min_sizes[3] )); then
+         [ "$DEBUG" ] && echo "   adjust free space down" >&2
+         (( new_sizes[3] -= sum - usable_size ))
+         sum=$usable_size
+      elif (( sum < usable_size )); then
+         [ "$DEBUG" ] && echo "   adjust free space up" >&2
+         (( new_sizes[3] += usable_size - sum ))
+         sum=$usable_size
+      fi
+   fi
 
-    # new sizes are correct
-    if (( sum == usable_size )); then
-        message+="\Z2Press next to accept changes.\Zn\n"
-        part_sizes=("${new_sizes[@]}")
-        return 2
-    fi
+   # new sizes are correct
+   if (( sum == usable_size )); then
+      message+="\Z2Press next to accept changes.\Zn\n"
+      part_sizes=("${new_sizes[@]}")
+      return 2
+   fi
 
-    # if partitions don't fit recalculate sizes proportionally
-    message+="\Z1Partitions scaled to fit disk size!\Zn\n"
-    # shellcheck disable=SC2068
-    calculate_sizes ${new_sizes[@]}
-    return 2
+   # if partitions don't fit recalculate sizes proportionally
+   message+="\Z1Partitions scaled to fit disk size!\Zn\n"
+   # shellcheck disable=SC2068
+   calculate_sizes ${new_sizes[@]}
+   return 2
 }
 
 # ----------------------------------------------------------------------
@@ -277,10 +289,10 @@ EOF
 #   Prints the fully‑assembled sfdisk command to `stdout`.
 # ----------------------------------------------------------------------
 assemble_sfdisk_input() {
-    local start index guid
+   local start index guid
 
-    # tell sfdisk we want a fresh GPT table
-    cat << EOF
+   # tell sfdisk we want a fresh GPT table
+   cat << EOF
 label: gpt
 device: ${device}
 unit: sectors
@@ -290,26 +302,26 @@ last-lba: $(( offset + usable_size - 1 ))
 
 EOF
 
-    # Start allocating partitions after offset (first MiB)
-    start=$offset
+   # Start allocating partitions after offset (first MiB)
+   start=$offset
 
-    for index in "${!partitions[@]}"; do
-        (( partitions[index] )) || continue # skip if flag == 0
+   for index in "${!partitions[@]}"; do
+      (( partitions[index] )) || continue # skip if flag == 0
 
-        # Choose the proper GPT type GUID
-        case $index in
-            0) guid="EBD0A0A2-B9E5-4433-87C0-68B6B72699C7" ;; # Microsoft basic data
-            1) guid="C12A7328-F81F-11D2-BA4B-00A0C93EC93B" ;; # EFI System Partition
-            2) guid="0FC63DAF-8483-4772-8E79-3D69D8477DE4" ;; # Linux filesystem
-            3) continue ;; # free space
-        esac
+      # Choose the proper GPT type GUID
+      case $index in
+         0) guid="EBD0A0A2-B9E5-4433-87C0-68B6B72699C7" ;; # Microsoft basic data
+         1) guid="C12A7328-F81F-11D2-BA4B-00A0C93EC93B" ;; # EFI System Partition
+         2) guid="0FC63DAF-8483-4772-8E79-3D69D8477DE4" ;; # Linux filesystem
+         3) continue ;; # free space
+      esac
 
-        # Print the partition definition line
-        printf '%s:start=%s,size=%s,type=%s,name="%s"\n' "${part_nodes[$index]}" \
-            "$start" "${part_sizes[$index]}" "$guid" "${part_names[$index]}"
+      # Print the partition definition line
+      printf '%s:start=%s,size=%s,type=%s,name="%s"\n' "${part_nodes[$index]}" \
+         "$start" "${part_sizes[$index]}" "$guid" "${part_names[$index]}"
 
-        (( start += part_sizes[index] ))
-    done
+      (( start += part_sizes[index] ))
+   done
 }
 
 # ----------------------------------------------------------------------
@@ -334,30 +346,30 @@ EOF
 #   * Calls `abort` on error, which removes temporary files and exits.
 # ----------------------------------------------------------------------
 format_device() {
-    local input="$1"
-    local ret
-    local -a cmd
+   local input="$1"
+   local ret
+   local -a cmd
 
-    cmd=( sfdisk --wipe always --wipe-partitions always "$device" "<${input}" )
+   cmd=( sfdisk --wipe always --wipe-partitions always "$device" "<${input}" )
 
-    if [[ $2 == 'noact' ]]; then
-        cmd+=( --no-act '2>&1' )
-    elif [ "$DEBUG" ]; then
-        cmd+=( '1>&2' )
-        echo "INFO format_device: Executing -> ${cmd[*]}" >&2
-    else
-        cmd+=( '>/dev/null' '2>&1' )
-    fi
+   if [[ $2 == 'noact' ]]; then
+      cmd+=( --no-act '2>&1' )
+   elif [ "$DEBUG" ]; then
+      cmd+=( '1>&2' )
+      echo "INFO format_device: Executing -> ${cmd[*]}" >&2
+   else
+      cmd+=( '>/dev/null' '2>&1' )
+   fi
 
-    # shellcheck disable=SC2294
-    eval "${cmd[@]}"
+   # shellcheck disable=SC2294
+   eval "${cmd[@]}"
 
-    ret=$?
-    if (( ret != 0 )); then
-        echo "ERROR format_device: sfdisk returned ${ret}" >&2
-        abort
-    fi
-    return $ret
+   ret=$?
+   if (( ret != 0 )); then
+      echo "ERROR format_device: sfdisk returned ${ret}" >&2
+      abort
+   fi
+   return $ret
 }
 
 # ----------------------------------------------------------------------
@@ -376,26 +388,26 @@ format_device() {
 #   * Executes external formatting utilities: `mkfs.exfat`, `mkfs.fat` and `mkfs.ext4`
 # ----------------------------------------------------------------------
 make_filesystems() {
-    local index label
+   local index label
 
-    set -e
-    for index in "${!part_nodes[@]}"; do
-        [[ -n ${part_nodes[index]} ]] || continue
-        case $index in
-            0)
-                label=${removable_devices[$device]:-'Data'}
-                mkfs.exfat -L "${label%% *}" "${part_nodes[$index]}"
-                ;; # storage
-            1)
-                mkfs.fat -n 'EFI' "${part_nodes[$index]}"
-                ;; # esp
-            2)
-                mkfs.ext4 -F -L 'casper-rw' "${part_nodes[$index]}"
-                ;; # system
-            3)
-                continue
-                ;; # free space
-        esac
-    done
-    set +e
+   set -e
+   for index in "${!part_nodes[@]}"; do
+      [[ -n ${part_nodes[index]} ]] || continue
+      case $index in
+         0)
+            label=${removable_devices[$device]:-'Data'}
+            mkfs.exfat -L "${label%% *}" "${part_nodes[$index]}"
+            ;; # storage
+         1)
+            mkfs.fat -n 'EFI' "${part_nodes[$index]}"
+            ;; # esp
+         2)
+            mkfs.ext4 -F -L 'casper-rw' "${part_nodes[$index]}"
+            ;; # system
+         3)
+            continue
+            ;; # free space
+      esac
+   done
+   set +e
 }
