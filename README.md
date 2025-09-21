@@ -1,4 +1,4 @@
-# <img src="https://github.com/Feasuro/keymaker/blob/main/resources/pendrive.png" width="64" height="64" /> Keymaker
+# <img src="https://github.com/Feasuro/keybuilder/blob/main/resources/pendrive.png" width="64" height="64" /> Keybuilder
 ### Text-based wizard for creating multi boot pendrive
 * Boot linux iso files directly
 * Option to use the pendrive also as regular storage

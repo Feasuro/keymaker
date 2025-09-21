@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Encoding=UTF-8
+Terminal=true
+StartupNotify=true
+GenericName=Multi-boot pendrive wizard
+Name=Keybuilder
+Exec=keybuilder
+Icon=/usr/share/icons/hicolor/512x512/apps/keybuilder.png
+Categories=Utility;
