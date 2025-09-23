@@ -14,21 +14,21 @@ LOOP_SH_INCLUDED=1
 # Returns: does not return – either continues as root or aborts.
 # ----------------------------------------------------------------------
 require_root() {
-    # If we are already uid 0 (root) there is nothing to do
-    [[ $(id -u) -eq 0 ]] && return 0
+   # If we are already uid 0 (root) there is nothing to do
+   [[ $(id -u) -eq 0 ]] && return 0
 
-    # Prefer sudo
-    if command -v sudo >/dev/null 2>&1; then
-        echo "INFO require_root: Requesting root privileges via sudo." >&2
-        exec sudo -E "$0" "$@"
-    # Fallback to pkexec
-    elif command -v pkexec >/dev/null 2>&1; then
-        echo "INFO require_root: Requesting root privileges via pkexec." >&2
-        exec pkexec "$0" "$@"
-    else
-        echo "Error: neither sudo nor pkexec is available. Cannot obtain root." >&2
-        abort
-    fi
+   # Prefer sudo
+   if command -v sudo >/dev/null 2>&1; then
+      log i ": Requesting root privileges via sudo."
+      exec sudo -E "$0" "$@"
+   # Fallback to pkexec
+   elif command -v pkexec >/dev/null 2>&1; then
+      log i ": Requesting root privileges via pkexec."
+      exec pkexec "$0" "$@"
+   else
+      log e "Neither sudo nor pkexec is available. Cannot obtain root."
+      abort
+   fi
 }
 
 # ----------------------------------------------------------------------
@@ -49,29 +49,29 @@ require_root() {
 #     of the wizard.
 # ----------------------------------------------------------------------
 run_loop() {
-    message=''
-    step=1
+   message=''
+   step=1
 
-    while true; do
-        case $step in
-            1)
-                find_devices
-                pick_device
-                ;;
-            2)
-                pick_partitions
-                set_partition_vars
-                ;;
-            3)
-                set_partitions_size
-                ;;
-            4)
-                confirm_format
-                ;;
-            5)
-                echo "Finished." >&2
-                break
-                ;;
-        esac
-    done
+   while true; do
+      case $step in
+         1)
+            find_devices
+            pick_device
+            ;;
+         2)
+            pick_partitions
+            set_partition_vars
+            ;;
+         3)
+            set_partitions_size
+            ;;
+         4)
+            confirm_format
+            ;;
+         5)
+            log i "Finished."
+            break
+            ;;
+      esac
+   done
 }

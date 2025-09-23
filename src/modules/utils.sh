@@ -11,12 +11,11 @@ UTILS_SH_INCLUDED=1
 #          array `removable_devices[<devname>]="<vendor> <model>"`.
 # Parameters: none (relies on state variables)
 # Variables used/set:
-#   DEBUG               – if set, prints extra diagnostics.
 #   removable_devices[] – associative array populated by this function.
 # Returns: nothing (populates the global array).
 # ----------------------------------------------------------------------
 find_devices() {
-   echo "INFO find_devices: Looking for connected devices." >&2
+   log i "Looking for connected devices."
    local sys_path id_bus id_vendor id_model devname label
    for sys_path in /sys/block/*; do
       # Reset variables for each iteration
@@ -38,7 +37,7 @@ find_devices() {
 
       # Skip read-only devices
       if [[ -f "$sys_path/ro" && $(<"$sys_path/ro") -eq 1 ]]; then
-         [ "$DEBUG" ] && echo "DEBUG find_devices: ${devname} is read-only, skipping." >&2
+         log d "${devname} is read-only, skipping."
          continue
       fi
 
@@ -92,11 +91,11 @@ set_partition_vars() {
    part_names=("$DEFAULT_STORAGE_NAME" "$DEFAULT_ESP_NAME" "$DEFAULT_SYSTEM_NAME" "free space")
 
    if ! dev_size="$(blockdev --getsz "${device}")"; then
-      echo "ERROR set_partition_vars: ${device} is inaccessible" >&2
+      log e "${device} is inaccessible"
       abort
    fi
    if ! sector_size="$(blockdev --getss "${device}")"; then
-      echo "ERROR set_partition_vars: ${device} is inaccessible" >&2
+      log e "${device} is inaccessible"
       abort
    fi
 
@@ -148,7 +147,7 @@ calculate_sizes() {
     ratio=$(( $1 * partitions[0] + $3 * partitions[2] + $4 * partitions[3] ))
 
    if (( ratio == 0 )); then
-      [ "$DEBUG" ] && echo "DEBUG calculate_sizes: No partitions enabled (ratio = 0)." >&2
+      log d "No partitions enabled (ratio = 0)."
       return 1
    fi
 
@@ -168,15 +167,12 @@ calculate_sizes() {
       (( index = ++index % ${#partitions[@]} ))
    done
 
-   if [ "$DEBUG" ]; then cat << EOF >&2
-DEBUG calculate_sizes:
+   log d "
    available  = ${available} sectors
    ratio      = ${ratio}
    remainder  = ${remainder} sectors
    part_sizes = (${part_sizes[0]}, ${part_sizes[1]}, ${part_sizes[2]}, ${part_sizes[3]})
-   sum(flex)  = $((part_sizes[0]+part_sizes[2]+part_sizes[3])) (should equal available)
-EOF
-   fi
+   sum(flex)  = $((part_sizes[0]+part_sizes[2]+part_sizes[3])) (should equal available)"
 }
 
 # ----------------------------------------------------------------------
@@ -218,13 +214,10 @@ validate_sizes() {
       shift
    done
 
-   if [ "$DEBUG" ]; then cat << EOF >&2
-DEBUG validate_sizes:
+   log d "
    part_sizes = ${part_sizes[*]}
    new_sizes  = ${new_sizes[*]}
-   accepted   = ${accepted}
-EOF
-   fi
+   accepted   = ${accepted}"
 
    # values were correct and accepted by user
    (( accepted )) && return 0
@@ -246,11 +239,11 @@ EOF
    # if free space was chosen we try to adjust it
    if (( partitions[3] )); then
       if (( sum > usable_size && sum - new_sizes[3] < usable_size - min_sizes[3] )); then
-         [ "$DEBUG" ] && echo "   adjust free space down" >&2
+         log d "   adjust free space down"
          (( new_sizes[3] -= sum - usable_size ))
          sum=$usable_size
       elif (( sum < usable_size )); then
-         [ "$DEBUG" ] && echo "   adjust free space up" >&2
+         log d "   adjust free space up"
          (( new_sizes[3] += usable_size - sum ))
          sum=$usable_size
       fi
@@ -355,18 +348,18 @@ format_device() {
    if [[ $2 == 'noact' ]]; then
       cmd+=( --no-act '2>&1' )
    elif [ "$DEBUG" ]; then
-      cmd+=( '1>&2' )
-      echo "INFO format_device: Executing -> ${cmd[*]}" >&2
+      log i "Executing -> ${cmd[*]}"
    else
-      cmd+=( '>/dev/null' '2>&1' )
+      cmd+=( '>/dev/null' )
+      log i "Executing -> ${cmd[*]}"
    fi
 
    # shellcheck disable=SC2294
-   eval "${cmd[@]}"
+   eval "${cmd[*]}"
 
    ret=$?
    if (( ret != 0 )); then
-      echo "ERROR format_device: sfdisk returned ${ret}" >&2
+      log e "sfdisk returned ${ret}"
       abort
    fi
    return $ret
@@ -396,12 +389,15 @@ make_filesystems() {
       case $index in
          0)
             label=${removable_devices[$device]:-'Data'}
+            log i "Creating exFAT filesystem on ${part_nodes[$index]}"
             mkfs.exfat -L "${label%% *}" "${part_nodes[$index]}"
             ;; # storage
          1)
+            log i "Creating FAT filesystem on ${part_nodes[$index]}"
             mkfs.fat -n 'EFI' "${part_nodes[$index]}"
             ;; # esp
          2)
+            log i "Creating ext4 filesystem on ${part_nodes[$index]}"
             mkfs.ext4 -F -L 'casper-rw' "${part_nodes[$index]}"
             ;; # system
          3)

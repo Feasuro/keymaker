@@ -6,10 +6,49 @@
 COMMON_SH_INCLUDED=1
 
 # ----------------------------------------------------------------------
+# ANSI color escape characters
+# ----------------------------------------------------------------------
+WHITE=$(printf '\033[97m')
+GREEN=$(printf '\033[92m')
+YELLOW=$(printf '\033[93m')
+RED=$(printf '\033[91m')
+RESET=$(printf '\033[0m')
+
+# ----------------------------------------------------------------------
 # Signal handling
 # ----------------------------------------------------------------------
 trap 'abort' INT
 trap 'abort' TERM
+
+# ----------------------------------------------------------------------
+# Usage:   log <level> "<message>"
+# Purpose: Simple leveled logger that writes to stderr.
+# Parameters:
+#   $1 – single‑letter level (d = DEBUG, i = INFO, w = WARNING, e = ERROR)
+#   $2 – message text to log (quote if it contains spaces)
+# Globals used:
+#   DEBUG – if set to a non‑zero value, DEBUG messages are emitted;
+#           otherwise they are suppressed.
+# Returns: 0 (returns early only for suppressed DEBUG messages)
+# Side‑Effects: writes to stderr (unless level is 'd' and DEBUG is turned off)
+# ----------------------------------------------------------------------
+log() {
+   local level="$1"
+   local msg="$2"
+   local header
+
+   if [[ $level == d && ( -z $DEBUG || $DEBUG == 0 ) ]]; then
+      return 0
+   fi
+   case $level in
+      'd') header="${WHITE}DEBUG${RESET}" ;;
+      'i') header="${GREEN}INFO${RESET}" ;;
+      'w') header="${YELLOW}WARNING${RESET}" ;;
+      'e') header="${RED}ERROR${RESET}" ;;
+   esac
+
+   echo "${header} ${FUNCNAME[1]}: ${msg}" >&2
+}
 
 # ----------------------------------------------------------------------
 # Usage: abort
@@ -19,9 +58,9 @@ trap 'abort' TERM
 # Returns: never returns – calls 'exit 1'.
 # ----------------------------------------------------------------------
 abort() {
-    rm -f "$tmpfile"
-    echo "Application aborted." >&2
-    exit 1
+   rm -f "$tmpfile"
+   log w "Application aborted."
+   exit 1
 }
 
 # ----------------------------------------------------------------------
@@ -32,8 +71,8 @@ abort() {
 # Returns: exits with status 0.
 # ----------------------------------------------------------------------
 app_exit() {
-    echo "Exiting." >&2
-    exit 0
+   log i "Exiting."
+   exit 0
 }
 
 # ----------------------------------------------------------------------
@@ -46,15 +85,15 @@ app_exit() {
 # Returns: may call 'abort' on unknown codes; otherwise updates $step.
 # ----------------------------------------------------------------------
 handle_exit_code() {
-    # Actions of dialog buttons
-    case $1 in
-        0) (( step++ )) ;;
-        1) app_exit ;;
-        2) ;;
-        3) (( step-- )) ;;
-        *) 
-            echo "Error: Unknown exit code - ${1}" >&2
-            abort
-        ;;
-    esac
+   # Actions of dialog buttons
+   case $1 in
+      0) (( step++ )) ;;
+      1) app_exit ;;
+      2) ;;
+      3) (( step-- )) ;;
+      *) 
+         log e "Unknown exit code - ${1}"
+         abort
+      ;;
+   esac
 }
