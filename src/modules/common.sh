@@ -2,7 +2,7 @@
 # common.sh
 # Depends on:
 # Usage: source common.sh
-[[ -n "${COMMON_SH_INCLUDED}" ]] && return
+[[ -n "${COMMON_SH_INCLUDED:-}" ]] && return
 COMMON_SH_INCLUDED=1
 
 # ----------------------------------------------------------------------
@@ -19,6 +19,7 @@ RESET=$(printf '\033[0m')
 # ----------------------------------------------------------------------
 trap 'abort' INT
 trap 'abort' TERM
+trap 'exit_handler' EXIT
 
 # ----------------------------------------------------------------------
 # Usage:   log <level> "<message>"
@@ -58,7 +59,7 @@ log() {
 # Returns: never returns – calls 'exit 1'.
 # ----------------------------------------------------------------------
 abort() {
-   rm -f "$tmpfile"
+   rm -f "${tmpfile:-}"
    log w "Application aborted."
    exit 1
 }
@@ -76,6 +77,31 @@ app_exit() {
 }
 
 # ----------------------------------------------------------------------
+# Usage: error_handler (used in a trap for unexpected errors)
+# Purpose: Error‑handling routine invoked automatically on script exit.
+#          It distinguishes between normal termination paths and unexpected errors.
+# Parameters: none (relies on Bash built‑ins)
+# Variables used:
+#   tmpfile   – temporary file name that should be cleaned up on exit
+# Returns:  never returns directly – either logs the error and cleans up,
+#           or does nothing for expected termination functions.
+# Side‑Effects:
+#   * Writes a formatted error message to stderr via `log e`.
+#   * Removes the temporary file referenced by `$tmpfile` (if set).
+# ----------------------------------------------------------------------
+exit_handler() {
+   case ${FUNCNAME[1]} in
+      abort|app_exit|main) ;;
+      *) log e "
+   ocurred in function: ${FUNCNAME[1]}
+   command:             ${BASH_COMMAND}
+   returned status:     $?"
+         rm -f "${tmpfile:-}"
+         ;;
+   esac
+}
+
+# ----------------------------------------------------------------------
 # Usage: handle_exit_code <code>
 # Purpose: Centralised handling of dialog exit codes.
 # Parameters:
@@ -85,14 +111,17 @@ app_exit() {
 # Returns: may call 'abort' on unknown codes; otherwise updates $step.
 # ----------------------------------------------------------------------
 handle_exit_code() {
+   local status=$1
+   log d "\`${FUNCNAME[1]}\` exited with status ${status}"
    # Actions of dialog buttons
-   case $1 in
+   case $status in
       0) (( step++ )) ;;
       1) app_exit ;;
       2) ;;
       3) (( step-- )) ;;
+      255) app_exit ;;
       *) 
-         log e "Unknown exit code - ${1}"
+         log e "Unknown exit code - ${status}"
          abort
       ;;
    esac

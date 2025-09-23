@@ -2,7 +2,7 @@
 # dialogs.sh
 # Depends on: utils.sh common.sh
 # Usage: source dialogs.sh and deps, in any order.
-[[ -n "${DIALOGS_SH_INCLUDED}" ]] && return
+[[ -n "${DIALOGS_SH_INCLUDED:-}" ]] && return
 DIALOGS_SH_INCLUDED=1
 
 # ----------------------------------------------------------------------
@@ -73,17 +73,10 @@ manual_dev_entry() {
 pick_device() {
    local result ret dev
    local -a dialog_items
+   ret=0
 
    device=''
-
-   # Check if we have any devices
-   if [[ ${#removable_devices[@]} -eq 0 ]]; then
-      message="No removable USB devices found."
-      log i "${message}"
-   else
-      message="Choose a removable USB device:"
-      log i "Found devices -> ${!removable_devices[*]}"
-   fi
+   find_devices
 
    # Build dialog menu items
    dialog_items=()
@@ -100,21 +93,16 @@ pick_device() {
       --cancel-label "Exit" \
       --menu "$message" 20 60 6 \
       "${dialog_items[@]}"
-      )
+      ) || ret=$?
 
-   ret=$?
    # Process selection
    if (( ret == 0 )); then
       case $result in
-         other) manual_dev_entry ;;
+         other) manual_dev_entry || ret=$? ;;
          *) device="$result" ;;
       esac
 
-      if [[ -n $device ]]; then
-         log i "Chosen device -> ${device}"
-      else
-         ret=2
-      fi
+      [[ -n $device ]] && log i "Chosen device -> ${device}"
    fi
 
    message=''
@@ -134,10 +122,12 @@ pick_device() {
 # Returns: none (updates $partitions and calls `handle_exit_code`).
 # Side‑Effects:
 #   * Displays `dialog` where the user can choose partitions to enable.
+#   * Calls `set_partition_vars` that manipulates several nonlocal variables
 # ----------------------------------------------------------------------
 pick_partitions() {
    local result ret opt
    local -a dialog_items
+   ret=0
 
    # Build dialog items
    dialog_items=(1 "Create partitions for bootloader and iso files" on)
@@ -153,9 +143,8 @@ pick_partitions() {
       --extra-label "Back" \
       --checklist "${message}Choose partitions to create:" 20 60 6 \
       "${dialog_items[@]}"
-   )
+   ) || ret=$?
 
-   ret=$?
    # Process selection
    if (( ret == 0 )); then
       message=''
@@ -172,6 +161,8 @@ pick_partitions() {
          message="\Z1No partitions to create!\Zn\n"
          ret=2
       fi
+
+      set_partition_vars
    fi
 
    handle_exit_code $ret
@@ -198,13 +189,14 @@ pick_partitions() {
 set_partitions_size() {
    local result count size ret index
    local -a dialog_items
+   ret=0
 
    # Build dialog items
    dialog_items=()
    count=0
    for index in "${!partitions[@]}"; do
       if (( partitions[index] )); then
-         (( count++ ))
+         (( ++count ))
          size=$(numfmt --to=iec-i $((part_sizes[index] * sector_size)))
          dialog_items+=("${device}${count} ${part_names[$index]}" \
             "$count" 1 "$size" "$count" 30 15 0)
@@ -222,14 +214,13 @@ set_partitions_size() {
       --extra-label "Back" \
       --form "${message}The following partitions will be created:" \
       20 60 4 "${dialog_items[@]}"
-   )
+   ) || ret=$?
 
-   ret=$?
    # Process input
    if (( ret == 0 )); then
       # shellcheck disable=SC2086
       IFS=$'\n' validate_sizes $result
-      (( ret += $? ))
+      ret=$(( ret + $? ))
    fi
 
    handle_exit_code $ret
@@ -255,6 +246,7 @@ set_partitions_size() {
 # ----------------------------------------------------------------------
 confirm_format() {
    local tmpfile ret
+   ret=0
 
    tmpfile=$(mktemp /tmp/sfdisk.XXXXXX)
    assemble_sfdisk_input > "$tmpfile"
@@ -270,13 +262,17 @@ confirm_format() {
       --yes-label "Next" \
       --no-label "Exit" \
       --extra-label "Back" \
-      --yesno "${message}" 30 90
+      --yesno "${message}" 30 90 \
+      || ret=$?
 
-   ret=$?
    # Process input
    if (( ret == 0 )); then
-      format_device "$tmpfile"
-      make_filesystems
+      if unmount_device_partitions; then
+         format_device "$tmpfile"
+         make_filesystems
+      else
+         : # TODO: dialog here
+      fi
    fi
 
    rm -f "$tmpfile"

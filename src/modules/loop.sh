@@ -2,7 +2,7 @@
 # loop.sh
 # Depends on: dialogs.sh utils.sh common.sh
 # Usage: source loop.sh and deps, in any order.
-[[ -n "${LOOP_SH_INCLUDED}" ]] && return
+[[ -n "${LOOP_SH_INCLUDED:-}" ]] && return
 LOOP_SH_INCLUDED=1
 
 # ----------------------------------------------------------------------
@@ -54,22 +54,11 @@ run_loop() {
 
    while true; do
       case $step in
-         1)
-            find_devices
-            pick_device
-            ;;
-         2)
-            pick_partitions
-            set_partition_vars
-            ;;
-         3)
-            set_partitions_size
-            ;;
-         4)
-            confirm_format
-            ;;
-         5)
-            log i "Finished."
+         1) pick_device ;;
+         2) pick_partitions ;;
+         3) set_partitions_size ;;
+         4) confirm_format ;;
+         5) log i "Finished."
             break
             ;;
       esac

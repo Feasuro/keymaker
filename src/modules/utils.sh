@@ -2,7 +2,7 @@
 # utils.sh
 # Depends on: common.sh
 # Usage: source utils.sh and deps, in any order.
-[[ -n "${UTILS_SH_INCLUDED}" ]] && return
+[[ -n "${UTILS_SH_INCLUDED:-}" ]] && return
 UTILS_SH_INCLUDED=1
 
 # ----------------------------------------------------------------------
@@ -17,6 +17,8 @@ UTILS_SH_INCLUDED=1
 find_devices() {
    log i "Looking for connected devices."
    local sys_path id_bus id_vendor id_model devname label
+   removable_devices=()
+
    for sys_path in /sys/block/*; do
       # Reset variables for each iteration
       id_bus='' id_vendor='' id_model='' devname=''
@@ -48,6 +50,15 @@ find_devices() {
             removable_devices["$devname"]="$label"
       fi
    done
+
+   # Check if we have any devices
+   if [[ ${#removable_devices[@]} -eq 0 ]]; then
+      message="No removable USB devices found."
+      log i "${message}"
+   else
+      message="Choose a removable USB device:"
+      log i "Found devices -> ${!removable_devices[*]}"
+   fi
 }
 
 # ----------------------------------------------------------------------
@@ -112,10 +123,10 @@ set_partition_vars() {
    part_nodes=('' '' '' '')
    number=1
    # walk through all indices but the last (free space)
-   for (( index = 0; index < ${#part_nodes[@]}-1; index++)); do
+   for (( index = 0; index < ${#part_nodes[@]}-1; ++index)); do
       (( partitions[index] )) || continue
       part_nodes[index]="${device}${number}"
-      (( number++ ))
+      (( ++number ))
    done
 
    # populate part_sizes with default weights and 50MiB for part 2
@@ -161,7 +172,7 @@ calculate_sizes() {
    index=${#partitions[@]}
    while (( remainder > 0 )); do
       if (( partitions[index] && index != 1 )); then
-            (( part_sizes[index]++ ))
+            (( ++part_sizes[index] ))
             (( remainder-- ))
       fi
       (( index = ++index % ${#partitions[@]} ))
@@ -263,6 +274,43 @@ validate_sizes() {
    return 2
 }
 
+# -------------------------------------------------
+# Usage: unmount_device_partitions
+# Purpose: Ensures every partition on a given block device is unmounted.
+# Parameters: none (relies on globals)
+# Variables used/set:
+#   device          – the block device (e.g. /dev/sdb)
+# Return codes:
+#   0 – all partitions were already unmounted or were successfully unmounted
+#   1 – one or more partitions could not be unmounted
+# -------------------------------------------------
+unmount_device_partitions() {
+   local ret part_list part
+   ret=0
+
+   # get partitions belonging to the device
+   part_list=$(lsblk -ln -o NAME "$device")
+
+   # Iterate over each partition and unmount it
+   while IFS= read -r part; do
+      part="/dev/${part}"
+      # check if already unmounted
+      findmnt "$part" >/dev/null || {
+         log d "${part} already unmounted"
+         continue
+      }
+
+      if umount "$part" 2>/dev/null; then
+         log i "Unmounted ${part}."
+      else
+         log w "Failed to unmount ${part}"
+         ret=1
+      fi
+   done <<<"$part_list"
+
+   return $ret
+}
+
 # ----------------------------------------------------------------------
 # Usage: assemble_sfdisk_input
 # Purpose: Construct complete sfdisk input that describes the
@@ -278,8 +326,7 @@ validate_sizes() {
 #   part_names[]    – human‑readable GPT partition labels
 #   part_nodes[]    – device node names for each partition (e.g. /dev/sdb1)
 # Returns: none (does not return a status code.)
-# Side‑Effects:
-#   Prints the fully‑assembled sfdisk command to `stdout`.
+# Side‑Effects: Prints the fully‑assembled sfdisk command to `stdout`.
 # ----------------------------------------------------------------------
 assemble_sfdisk_input() {
    local start index guid
@@ -340,12 +387,11 @@ EOF
 # ----------------------------------------------------------------------
 format_device() {
    local input="$1"
-   local ret
    local -a cmd
 
    cmd=( sfdisk --wipe always --wipe-partitions always "$device" "<${input}" )
 
-   if [[ $2 == 'noact' ]]; then
+   if [[ ${2:-} == 'noact' ]]; then
       cmd+=( --no-act '2>&1' )
    elif [ "$DEBUG" ]; then
       log i "Executing -> ${cmd[*]}"
@@ -356,13 +402,6 @@ format_device() {
 
    # shellcheck disable=SC2294
    eval "${cmd[*]}"
-
-   ret=$?
-   if (( ret != 0 )); then
-      log e "sfdisk returned ${ret}"
-      abort
-   fi
-   return $ret
 }
 
 # ----------------------------------------------------------------------
@@ -383,7 +422,6 @@ format_device() {
 make_filesystems() {
    local index label
 
-   set -e
    for index in "${!part_nodes[@]}"; do
       [[ -n ${part_nodes[index]} ]] || continue
       case $index in
@@ -405,5 +443,4 @@ make_filesystems() {
             ;; # free space
       esac
    done
-   set +e
 }
