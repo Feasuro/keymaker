@@ -1,59 +1,9 @@
 #!/bin/bash
-# dialogs.sh
-# Depends on: utils.sh common.sh
-# Usage: source dialogs.sh and deps, in any order.
-[[ -n "${DIALOGS_SH_INCLUDED:-}" ]] && return
-DIALOGS_SH_INCLUDED=1
-
-# ----------------------------------------------------------------------
-# Usage: manual_dev_entry
-# Purpose: Prompt the user to type a device path manually (advanced mode).
-# Parameters: none
-# Variables used/set:
-#   BACKTITLE   – application name.
-#   device      – variable receiving the selected device path.
-# Returns:
-#   0 – a valid device was entered,
-#   2 – user cancelled or entered an invalid device.
-# Side‑Effects:
-#   * Displays input `dialog` where user can enter a device.
-# ----------------------------------------------------------------------
-manual_dev_entry() {
-   local result devtype
-
-   # Show dialog
-   result=$(dialog --keep-tite --stdout \
-      --backtitle "$BACKTITLE" \
-      --title "Enter device" \
-      --inputbox "Enter device name (e.g. /dev/sdX)" 10 40
-   )
-   # shellcheck disable=SC2181
-   (( $? == 0 )) || return 2
-
-   # Check if a block device was given
-   if [[ -b $result ]]; then
-      devtype="$(udevadm info --query=property --no-pager --name="${result}" \
-         2>/dev/null | grep '^DEVTYPE=' | cut -d= -f2)"
-      # Check if it is a disk, ask for confirmation if not
-      if [[ $devtype = 'disk' ]]; then
-         device="$result"
-         return 0
-      elif dialog --keep-tite \
-         --backtitle "$BACKTITLE" \
-         --title "Warning" \
-         --yesno "${result} appears to be ${devtype} not a disk.\nAre you sure you know what you are doing?" 10 40
-         then
-         device="$result"
-         return 0
-      fi
-   else
-      dialog --keep-tite \
-      --backtitle "$BACKTITLE" \
-      --title "Error" \
-      --msgbox "${result} is not a valid block device!" 10 40
-   fi
-   return 2
-}
+# step_dialogs.sh
+# Depends on: helper_dialogs.sh dev_utils.sh common.sh
+# Usage: source step_dialogs.sh and deps, in any order.
+[[ -n "${STEP_DIALOGS_SH_INCLUDED:-}" ]] && return
+STEP_DIALOGS_SH_INCLUDED=1
 
 # ----------------------------------------------------------------------
 # Usage: pick_device
@@ -65,7 +15,7 @@ manual_dev_entry() {
 #   message             – message for the user to display on dialog box
 #   device              – selected device path (set here).
 #   removable_devices[] – associative array filled by `find_devices`.
-# Returns: none (updates globals and calls `handle_exit_code`).
+# Returns: 0 (calls `handle_exit_code`).
 # Side‑Effects:
 #   * Displays `dialog` form where user can pick device to use.
 #   * Prints comunicates to stderr.
@@ -119,8 +69,9 @@ pick_device() {
 #   message      – message for the user to display on dialog box
 #   partitions[] – indexed array (size 4) of flags (0/1) indicating which
 #                  partitions are selected.
-# Returns: none (updates $partitions and calls `handle_exit_code`).
+# Returns: 0 (calls `handle_exit_code`).
 # Side‑Effects:
+#   * Updates partitions[] array
 #   * Displays `dialog` where the user can choose partitions to enable.
 #   * Calls `set_partition_vars` that manipulates several nonlocal variables
 # ----------------------------------------------------------------------
@@ -182,8 +133,9 @@ pick_partitions() {
 #   part_sizes[]   – current partition sizes (in sectors) modified here
 #   partitions[]   – flags indicating which partitions are enabled
 #   part_names[]   – human‑readable names for each partition
-# Returns: none (updates $part_sizes and calls `handle_exit_code`).
+# Returns: 0 (calls `handle_exit_code`).
 # Side‑Effects:
+#   * Updates part_sizes[] array
 #   * Displays `dialog` form where the user can edit partition sizes.
 # ----------------------------------------------------------------------
 set_partitions_size() {
@@ -234,7 +186,7 @@ set_partitions_size() {
 # Globals used/set: none
 #   BACKTITLE   – application name.
 #   message     – informational text displayed on dialog box
-# Returns: none (calls `handle_exit_code`).
+# Returns: 0 (calls `handle_exit_code`).
 # Side‑Effects:
 #   * Shows a `dialog` window that warns the user about data loss.
 #   * Creates a temporary file with partition description.
@@ -248,14 +200,22 @@ confirm_format() {
    local tmpfile ret
    ret=0
 
+   # ensure nothing is mounted before proceeding
+   unmount_device_partitions || {
+      request_manual_unmount || handle_exit_code $?
+      return $ret
+   }
+
    tmpfile=$(mktemp /tmp/sfdisk.XXXXXX)
    assemble_sfdisk_input > "$tmpfile"
 
+   # show the user what would be done
    message=$(
       printf "\Z1\ZbProceeding will erase all data on the device!\ZB\Zn\n\n"
       format_device "$tmpfile" 'noact'
    )
 
+   # show the confirmation dialog
    dialog --keep-tite --colors --no-collapse --extra-button \
       --backtitle "$BACKTITLE" \
       --title "Confirm partitioning scheme" \
@@ -267,12 +227,8 @@ confirm_format() {
 
    # Process input
    if (( ret == 0 )); then
-      if unmount_device_partitions; then
-         format_device "$tmpfile"
-         make_filesystems
-      else
-         : # TODO: dialog here
-      fi
+      format_device "$tmpfile"
+      make_filesystems
    fi
 
    rm -f "$tmpfile"

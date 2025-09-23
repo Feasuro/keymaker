@@ -1,9 +1,9 @@
 #!/bin/bash
-# utils.sh
+# dev_utils.sh
 # Depends on: common.sh
-# Usage: source utils.sh and deps, in any order.
-[[ -n "${UTILS_SH_INCLUDED:-}" ]] && return
-UTILS_SH_INCLUDED=1
+# Usage: source dev_utils.sh and deps, in any order.
+[[ -n "${DEV_UTILS_SH_INCLUDED:-}" ]] && return
+DEV_UTILS_SH_INCLUDED=1
 
 # ----------------------------------------------------------------------
 # Usage: find_devices

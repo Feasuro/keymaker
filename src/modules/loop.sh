@@ -1,6 +1,6 @@
 #!/bin/bash
 # loop.sh
-# Depends on: dialogs.sh utils.sh common.sh
+# Depends on: step_dialogs.sh common.sh
 # Usage: source loop.sh and deps, in any order.
 [[ -n "${LOOP_SH_INCLUDED:-}" ]] && return
 LOOP_SH_INCLUDED=1
@@ -19,11 +19,11 @@ require_root() {
 
    # Prefer sudo
    if command -v sudo >/dev/null 2>&1; then
-      log i ": Requesting root privileges via sudo."
+      log i "Requesting root privileges via sudo."
       exec sudo -E "$0" "$@"
    # Fallback to pkexec
    elif command -v pkexec >/dev/null 2>&1; then
-      log i ": Requesting root privileges via pkexec."
+      log i "Requesting root privileges via pkexec."
       exec pkexec "$0" "$@"
    else
       log e "Neither sudo nor pkexec is available. Cannot obtain root."

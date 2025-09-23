@@ -30,6 +30,7 @@ trap 'exit_handler' EXIT
 # Globals used:
 #   DEBUG – if set to a non‑zero value, DEBUG messages are emitted;
 #           otherwise they are suppressed.
+#   WHITE, GREEN, YELLOW, RED, RESET – ANSI terminal escape characters
 # Returns: 0 (returns early only for suppressed DEBUG messages)
 # Side‑Effects: writes to stderr (unless level is 'd' and DEBUG is turned off)
 # ----------------------------------------------------------------------
@@ -106,7 +107,7 @@ exit_handler() {
 # Purpose: Centralised handling of dialog exit codes.
 # Parameters:
 #   $1 – numeric exit code returned by a dialog command.
-# Globals used:
+# Variables used:
 #   step – current wizard step (incremented/decremented here).
 # Returns: may call 'abort' on unknown codes; otherwise updates $step.
 # ----------------------------------------------------------------------
