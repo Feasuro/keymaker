@@ -40,11 +40,14 @@ install_bootloader() {
    grub_env="${sys_dir}/grub/grubenv"
 
    log i "Commencing GRUB installation."
-   grub-install --target=i386-pc --force --boot-directory="$sys_dir" "$device"
-   grub-install --target=x86_64-efi --removable --boot-directory="$sys_dir" --efi-directory="$efi_dir"
+   grub-install --target=i386-pc --force --locale-directory="${grub_dir}/locale" \
+      --boot-directory="$sys_dir" "$device"
+   grub-install --target=x86_64-efi --removable --locale-directory="${grub_dir}/locale" \
+      --boot-directory="$sys_dir" --efi-directory="$efi_dir"
    install -d "${sys_dir}/${BOOT_ISOS_DIR}"
    install -Dm0644 -t "${sys_dir}/grub/" "${grub_dir}/"*.cfg
    install -Dm0644 -t "${sys_dir}/grub/themes/" "${grub_dir}/themes/background.png"
+   install -Dm0644 -t "${sys_dir}/grub/fonts/" "${grub_dir}/fonts/"*.pf2
 
    # Setup GRUB environment variables
    grub-editenv "${grub_env}" set pager=1
