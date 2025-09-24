@@ -5,31 +5,41 @@ set -euo pipefail
 # Global variables
 # ----------------------------------------------------------------------
 BACKTITLE="Keybuilder" # program name.
-VERSION="0.1"          # program version
+VERSION="0.2"          # program version
 DEBUG=${DEBUG:-1}  # if not-null causes app to print verbose messages to `stderr`.
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" # installation directory.
-GLOBAL_CONFIG_FILE="/etc/keybuilder.conf"        # location of configuration file.
-USER_CONFIG_FILE="${XDG_CONFIG_HOME:-"${HOME}/.config"}/keybuilder.conf" # as above (per user)
+SHARED_DIR="/usr/share/${BACKTITLE,,}" 
+GLOBAL_CONFIG_FILE="/etc/${BACKTITLE,,}.conf"        # location of configuration file.
+USER_CONFIG_FILE="${XDG_CONFIG_HOME:-"${HOME}/.config"}/${BACKTITLE,,}.conf" # as above (per user)
 
-# ----------------------------------------------------------------------
-# Configuration & modules
-# ----------------------------------------------------------------------
+# Import modules
+for module in "${BASE_DIR}/modules/"*.sh; do
+   source "$module"
+done
+
+# Determine resources path (if running portable)
+if [[ $(basename "$(dirname "$BASE_DIR")") == "${BACKTITLE,,}" ]]; then
+   SHARED_DIR=$(dirname "$BASE_DIR")
+elif [[ -d $SHARED_DIR ]]; then
+   :
+else
+   log e "Couldn't find shared directory."
+   abort
+fi
+
+# Import configuration
 if [[ -f $GLOBAL_CONFIG_FILE ]]; then
    source "$GLOBAL_CONFIG_FILE"
 elif [[ -f "${BASE_DIR}/config.sh" ]]; then
    source "${BASE_DIR}/config.sh"
 else
-   echo "ERROR: Couldn't find configuration file." >&2
-   exit 1
+   log e "Couldn't find configuration file."
+   abort
 fi
 
 if [[ -f $USER_CONFIG_FILE ]]; then
    source "$USER_CONFIG_FILE"
 fi
-
-for module in "${BASE_DIR}/modules/"*.sh; do
-   source "$module"
-done
 
 # ----------------------------------------------------------------------
 # Usage: main "$@"

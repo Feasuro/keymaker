@@ -1,6 +1,6 @@
 # Maintainer: Feasuro <feasuro at pm dot me>
 pkgname=keybuilder
-pkgver=0.1
+pkgver=0.2
 pkgrel=1
 pkgdesc='Text-based wizard for creating multi boot pendrive.'
 arch=(any)
@@ -32,7 +32,7 @@ package() {
   cd "${srcdir}/${pkgname}"
 
   install -Dm0644 -t "${pkgdir}/usr/lib/${pkgname}/modules/" src/modules/*
-  install -Dm0644 -t "${pkgdir}/usr/lib/${pkgname}/" "src/main.sh"
+  install -Dm0644 -t "${pkgdir}/usr/lib/${pkgname}/" src/main.sh
   install -Dm0644 "src/config.sh" "${pkgdir}/etc/${pkgname}.conf"
   install -Dm0644 "resources/pendrive.png" "${pkgdir}/usr/share/icons/hicolor/512x512/apps/${pkgname}.png"
   install -Dm0755 -t "${pkgdir}/usr/share/applications/" "${pkgname}.desktop"
@@ -44,4 +44,7 @@ package() {
 source /usr/lib/${pkgname}/main.sh
 EOF
   chmod +x "${pkgdir}/usr/bin/${pkgname}"
+
+  mkdir -p "${pkgdir}/usr/share/${pkgname}"
+  cp -r grub "${pkgdir}" "${pkgdir}/usr/share/${pkgname}/"
 }

@@ -70,13 +70,9 @@ find_devices() {
 # Globals used:
 #   GPT_BACKUP_SECTORS – number of sectors consumed by GPT table backup
 #   PART_TABLE_OFFSET  – protected space at the beginning of disk (in bytes)
-#   DEFAULT_STORAGE_NAME   – dafault GPT partition name for storage partition
-#   DEFAULT_ESP_NAME       – dafault GPT partition name for esp partition
-#   DEFAULT_SYSTEM_NAME    – dafault GPT partition name for system partition
-#   DEFAULT_ESP_SIZE       – default esp partition size (in bytes)
-#   DEFAULT_STORAGE_WEIGHT – default weight of storage partition size
-#   DEFAULT_SYSTEM_WEIGHT  – default weight of system partition size
-#   DEFAULT_FREE_WEIGHT    – default weight of free space size
+#   STORAGE_PART_NAME  – dafault GPT partition name for storage partition
+#   ESP_PART_NAME      – dafault GPT partition name for esp partition
+#   SYSTEM_PART_NAME   – dafault GPT partition name for system partition
 #   MIN_STORAGE_SIZE   – minimal size of storage partition
 #   MIN_ESP_SIZE       – minimal size of esp partition
 #   MIN_SYSTEM_SIZE    – minimal size of system partition
@@ -99,7 +95,7 @@ set_partition_vars() {
    local dev_size index number
 
    # gpt partition names
-   part_names=("$DEFAULT_STORAGE_NAME" "$DEFAULT_ESP_NAME" "$DEFAULT_SYSTEM_NAME" "free space")
+   part_names=("$STORAGE_PART_NAME" "$ESP_PART_NAME" "$SYSTEM_PART_NAME" "free space")
 
    if ! dev_size="$(blockdev --getsz "${device}")"; then
       log e "${device} is inaccessible"
@@ -130,8 +126,7 @@ set_partition_vars() {
    done
 
    # populate part_sizes with default weights and 50MiB for part 2
-   calculate_sizes "$DEFAULT_STORAGE_WEIGHT" $(( DEFAULT_ESP_SIZE / sector_size )) \
-      "$DEFAULT_SYSTEM_WEIGHT" "$DEFAULT_FREE_WEIGHT"
+   calculate_sizes 2 $(( 52428800 / sector_size )) 2 1
 }
 
 # ----------------------------------------------------------------------

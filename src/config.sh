@@ -1,15 +1,10 @@
-# Default GPT partition names
-DEFAULT_STORAGE_NAME='storage'
-DEFAULT_ESP_NAME='esp'
-DEFAULT_SYSTEM_NAME='system'
+# Name of directory with iso files
+BOOT_ISOS_DIR='boot-isos'
 
-# Default esp partition size in bytes
-DEFAULT_ESP_SIZE=52428800   # 50MiB
-
-# Default proportions of flex-size partitions and free space
-DEFAULT_STORAGE_WEIGHT=2
-DEFAULT_SYSTEM_WEIGHT=2
-DEFAULT_FREE_WEIGHT=1
+# GPT partition names
+STORAGE_PART_NAME='storage'
+ESP_PART_NAME='esp'
+SYSTEM_PART_NAME='system'
 
 # Below variables define minimal sizes for partitions (in bytes).
 MIN_STORAGE_SIZE=2147483648 # 2GiB
