@@ -58,7 +58,8 @@ run_loop() {
          2) pick_partitions ;;
          3) set_partitions_size ;;
          4) confirm_format ;;
-         5) log i "Finished."
+         5) install_components ;;
+         6) log i "Finished."
             break
             ;;
       esac

@@ -13,6 +13,7 @@ depends=(
   'exfatprogs'
   'dosfstools'
   'e2fsprogs'
+  'grub'
   )
 makedepends=('git')
 source=("${pkgname}::git+${url}.git")

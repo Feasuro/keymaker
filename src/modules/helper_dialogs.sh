@@ -1,6 +1,6 @@
 #!/bin/bash
 # helper_dialogs.sh
-# Depends on: dev_utils.sh common.sh
+# Depends on: common.sh
 # Usage: source helper_dialogs.sh and deps, in any order.
 [[ -n "${HELPER_DIALOGS_SH_INCLUDED:-}" ]] && return
 HELPER_DIALOGS_SH_INCLUDED=1

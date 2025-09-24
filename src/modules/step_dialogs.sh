@@ -1,6 +1,6 @@
 #!/bin/bash
 # step_dialogs.sh
-# Depends on: helper_dialogs.sh dev_utils.sh common.sh
+# Depends on: helper_dialogs.sh dev_utils.sh boot_utils.sh common.sh
 # Usage: source step_dialogs.sh and deps, in any order.
 [[ -n "${STEP_DIALOGS_SH_INCLUDED:-}" ]] && return
 STEP_DIALOGS_SH_INCLUDED=1
@@ -232,5 +232,39 @@ confirm_format() {
    fi
 
    rm -f "$tmpfile"
+   handle_exit_code $ret
+}
+
+# ----------------------------------------------------------------------
+# Usage: install_components
+# Purpose: Shows dialog with components to install along with the bootloader,
+#          then performs installation according to user selection.
+# Parameters: none (relies on globals)
+# Globals used/set: none
+#   BACKTITLE   – application name.
+# Returns: 0 (calls `handle_exit_code`).
+# Side‑Effects:
+#   * Shows a `dialog` window.
+#   * Calls `install_bootloader` to perform actual installation.
+# ----------------------------------------------------------------------
+install_components() {
+   local ret
+   ret=0
+
+   # show the dialog
+   dialog --keep-tite --extra-button \
+      --backtitle "$BACKTITLE" \
+      --title "Choose components to install" \
+      --yes-label "Next" \
+      --no-label "Exit" \
+      --extra-label "Back" \
+      --yesno "Hit enter to install GRUB" 20 60 \
+      || ret=$?
+
+   # Process input
+   if (( ret == 0 )); then
+      install_bootloader
+   fi
+
    handle_exit_code $ret
 }
