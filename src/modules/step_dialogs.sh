@@ -34,6 +34,7 @@ pick_device() {
       dialog_items+=("$dev" "${removable_devices[$dev]}")
    done
    dialog_items+=("other" "Specify device manually (advanced)")
+   dialog_items+=("rescan" "Repeat device search")
 
    # Show menu dialog
    result=$(dialog --keep-tite --stdout \
@@ -48,6 +49,7 @@ pick_device() {
    # Process selection
    if (( ret == 0 )); then
       case $result in
+         rescan) ret=2 ;;
          other) manual_dev_entry || ret=$? ;;
          *) device="$result" ;;
       esac
@@ -197,12 +199,12 @@ set_partitions_size() {
 #   * Deletes the temporary file before exiting.
 # ----------------------------------------------------------------------
 confirm_format() {
-   local tmpfile ret
+   local msg tmpfile ret
    ret=0
 
    # ensure nothing is mounted before proceeding
    unmount_device_partitions || {
-      request_manual_unmount || handle_exit_code $?
+      request_manual_unmount || app_exit
       return $ret
    }
 
@@ -210,7 +212,7 @@ confirm_format() {
    assemble_sfdisk_input > "$tmpfile"
 
    # show the user what would be done
-   message=$(
+   msg=$(
       printf "\Z1\ZbProceeding will erase all data on the device!\ZB\Zn\n\n"
       format_device "$tmpfile" 'noact'
    )
@@ -222,7 +224,7 @@ confirm_format() {
       --yes-label "Next" \
       --no-label "Exit" \
       --extra-label "Back" \
-      --yesno "${message}" 30 90 \
+      --yesno "${msg}" 30 90 \
       || ret=$?
 
    # Process input
@@ -237,19 +239,22 @@ confirm_format() {
 
 # ----------------------------------------------------------------------
 # Usage: install_components
-# Purpose: Shows dialog with components to install along with the bootloader,
+# Purpose: Show dialog with components to install along with the bootloader,
 #          then performs installation according to user selection.
 # Parameters: none (relies on globals)
 # Globals used/set: none
 #   BACKTITLE   – application name.
 # Returns: 0 (calls `handle_exit_code`).
 # Side‑Effects:
+#   * Calls `check_uefi` and terminates script if it fails.
 #   * Shows a `dialog` window.
 #   * Calls `install_bootloader` to perform actual installation.
 # ----------------------------------------------------------------------
 install_components() {
    local ret
    ret=0
+
+   check_uefi || abort
 
    # show the dialog
    dialog --keep-tite --extra-button \

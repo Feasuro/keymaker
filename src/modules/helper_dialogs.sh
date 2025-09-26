@@ -26,9 +26,7 @@ manual_dev_entry() {
       --backtitle "$BACKTITLE" \
       --title "Enter device" \
       --inputbox "Enter device name (e.g. /dev/sdX)" 10 40
-   )
-   # shellcheck disable=SC2181
-   (( $? == 0 )) || return 2
+   ) || return 2
 
    # Check if a block device was given
    if [[ -b $result ]]; then
@@ -39,18 +37,18 @@ manual_dev_entry() {
          device="$result"
          return 0
       elif dialog --keep-tite \
-         --backtitle "$BACKTITLE" \
-         --title "Warning" \
-         --yesno "${result} appears to be ${devtype} not a disk.\nAre you sure you know what you are doing?" 10 40
+            --backtitle "$BACKTITLE" \
+            --title "Warning" \
+            --yesno "${result} appears to be ${devtype} not a disk.\nAre you sure you know what you are doing?" 10 40
          then
          device="$result"
          return 0
       fi
    else
       dialog --keep-tite \
-      --backtitle "$BACKTITLE" \
-      --title "Error" \
-      --msgbox "${result} is not a valid block device!" 10 40
+         --backtitle "$BACKTITLE" \
+         --title "Warning" \
+         --msgbox "${result} is not a valid block device!" 10 40
    fi
    return 2
 }
@@ -81,4 +79,38 @@ manually and press OK to continue."
       --yes-label "OK" \
       --no-label "Exit" \
       --yesno "${msg}" 10 50
+}
+
+# ----------------------------------------------------------------------
+# Usage: check_uefi
+# Purpose: Check if running in UEFI mode. If not prompt the user about
+#          UEFI requirement.
+# Parameters: none
+# Variables used/set:
+#   BACKTITLE   – application name.
+# Returns:
+#   0 – UEFI detected
+#   1 – non-UEFI system
+# Side‑Effects:
+#   * Displays `dialog` with a message.
+# ----------------------------------------------------------------------
+check_uefi() {
+   local msg
+
+   if [ ! -d /sys/firmware/efi ]; then
+      log w "Running in non-UEFI mode!"
+
+      msg="System is running in legacy BIOS mode.
+\ZbProgram requires UEFI\ZB to continue bootloader installation.
+Please reboot the system into UEFI mode to continue."
+
+      dialog --keep-tite --colors \
+         --backtitle "$BACKTITLE" \
+         --title "Error" \
+         --msgbox "$msg" 10 50
+
+      return 1
+   fi
+
+   return 0
 }
