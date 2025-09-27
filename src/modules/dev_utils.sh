@@ -45,10 +45,9 @@ find_devices() {
 }
 
 # ----------------------------------------------------------------------
-# Usage: set_partition_vars
-# Purpose: Derive geometry‑related variables (sector size, usable size,
-#          offsets, minimal sizes in sectors, node names, etc.) based on the
-#          selected device and the partition flags.
+# Usage: set_config_vars
+# Purpose: Derive geometry‑related variables (sector size, offset, minimal
+#          sizes, partition names...) based on the configuration globals.
 # Parameters: none
 # Globals used:
 #   GPT_BACKUP_SECTORS – number of sectors consumed by GPT table backup
@@ -67,18 +66,10 @@ find_devices() {
 #   usable_size        – sectors available for partitions (excluding GPT backup)
 #   part_names[]       – human‑readable GPT labels
 #   min_sizes[]        – minimal partition sizes (in sectors)
-#   part_nodes[]       – device node names for each partition (e.g. /dev/sdb1)
-#   part_sizes[]       – modified with call to `calculate_sizes`
-#   partitions[]       – flags set by dialog `pick_partitions`
-# Returns: (same as `calculate_sizes` called at the end)
-#   0 – success,
-#   1 – error,
+# Returns: none
 # ----------------------------------------------------------------------
-set_partition_vars() {
-   local dev_size index number
-
-   # gpt partition names
-   part_names=("$STORAGE_PART_NAME" "$ESP_PART_NAME" "$SYSTEM_PART_NAME" "free space")
+set_config_vars() {
+   local dev_size
 
    if ! dev_size="$(blockdev --getsz "${device}")"; then
       log e "${device} is inaccessible"
@@ -89,15 +80,41 @@ set_partition_vars() {
       abort
    fi
 
-   offset=$(( PART_TABLE_OFFSET / sector_size )) # first 1MiB (sectors)
-   usable_size=$(( dev_size - offset - GPT_BACKUP_SECTORS )) # last sectors for gpt table backup
+   # values in sectors
+   offset=$(( $(numfmt --from=iec-i "$PART_TABLE_OFFSET") / sector_size ))
+   usable_size=$(( dev_size - offset - GPT_BACKUP_SECTORS ))
 
-   # define minimal partition sizes in bytes
-   min_sizes=( "$MIN_STORAGE_SIZE" "$MIN_ESP_SIZE" "$MIN_SYSTEM_SIZE" "$MIN_FREE_SIZE" )
-   # convert min_sizes to sectors
-   for index in "${!min_sizes[@]}"; do
-      (( min_sizes[index] /= sector_size ))
-   done
+   # gpt partition names
+   part_names=("$STORAGE_PART_NAME" "$ESP_PART_NAME" "$SYSTEM_PART_NAME" "free space")
+
+   # define minimal partition sizes in sectors
+   min_sizes=(
+      $(( $(numfmt --from=iec-i "$MIN_STORAGE_SIZE") / sector_size ))
+      $(( $(numfmt --from=iec-i "$MIN_ESP_SIZE") / sector_size ))
+      $(( $(numfmt --from=iec-i "$MIN_SYSTEM_SIZE") / sector_size ))
+      $(( $(numfmt --from=iec-i "$MIN_FREE_SIZE") / sector_size ))
+   )
+}
+
+# ----------------------------------------------------------------------
+# Usage: set_partition_vars
+# Purpose: Derive partition nodes and compute their sizes based on
+#          the selected device and the partition flags.      
+# Parameters: none
+# Variables used/set:
+#   device             – selected block device (e.g. /dev/sdb)
+#   sector_size        – bytes per sector (from `blockdev --getss`)
+#   part_nodes[]       – device node names for each partition (e.g. /dev/sdb1)
+#   part_sizes[]       – modified with call to `calculate_sizes`
+#   partitions[]       – flags set by dialog `pick_partitions`
+# Returns: (same as `calculate_sizes` called at the end)
+#   0 – success,
+#   1 – error,
+# ----------------------------------------------------------------------
+set_partition_vars() {
+   local index number
+
+   set_config_vars
 
    part_nodes=('' '' '' '')
    number=1
@@ -133,10 +150,10 @@ calculate_sizes() {
    local available ratio remainder index
 
    available=$(( usable_size - $2 ))
-    ratio=$(( $1 * partitions[0] + $3 * partitions[2] + $4 * partitions[3] ))
+   ratio=$(( $1 * partitions[0] + $3 * partitions[2] + $4 * partitions[3] ))
 
    if (( ratio == 0 )); then
-      log d "No partitions enabled (ratio = 0)."
+      log e "No partitions enabled (ratio = 0)."
       return 1
    fi
 
@@ -374,7 +391,6 @@ format_device() {
       log i "Executing -> ${cmd[*]}"
    fi
 
-   # shellcheck disable=SC2294
    eval "${cmd[*]}"
 }
 
@@ -384,6 +400,8 @@ format_device() {
 #          filesystem type and label.
 # Parameters: none (relies on globals)
 # Variables used/set:
+#   LABEL_USE_PROPERTY   – specifies what to use as storage filesystem label
+#   LABEL_STORAGE        – default storage filesystem label (see config)
 #   device               – the target block device (e.g. /dev/sdb)
 #   part_nodes[]         – device node names for each partition (e.g. /dev/sdb1)
 #   removable_devices[]  – associative array mapping a device path to a
@@ -396,13 +414,20 @@ format_device() {
 make_filesystems() {
    local index label
 
+   # Prepare storage label according to configuration
+   case $LABEL_USE_PROPERTY in
+      vendor) label=$(lsblk -lnd -o VENDOR "$device") ;;
+      model) label=$(lsblk -lnd -o MODEL "$device") ;;
+      *) label=$LABEL_STORAGE ;;
+   esac
+   label=${label:-$LABEL_STORAGE}
+
    for index in "${!part_nodes[@]}"; do
       [[ -n ${part_nodes[index]} ]] || continue
       case $index in
          0)
-            label=${removable_devices[$device]:-'Data'}
             log i "Creating exFAT filesystem on ${part_nodes[$index]}"
-            mkfs.exfat -L "${label%% *}" "${part_nodes[$index]}"
+            mkfs.exfat -L "${label::11}" "${part_nodes[$index]}"
             ;; # storage
          1)
             log i "Creating FAT filesystem on ${part_nodes[$index]}"
@@ -417,4 +442,72 @@ make_filesystems() {
             ;; # free space
       esac
    done
+}
+
+# ----------------------------------------------------------------------
+# Usage: detect_target_partitions
+# Purpose: Check if preformatted device has EFI partition and `system`
+#          partition, populate appropriate variables.
+# Parameters: none
+# Variables used/set:
+#   device             – selected block device (e.g. /dev/sdb)
+#   sector_size        – bytes per sector (from `blockdev --getss`)
+#   min_sizes[]        – minimal partition sizes (in sectors)
+#   part_names[]       – human‑readable GPT labels
+#   part_nodes[]       – device node names for each partition (e.g. /dev/sdb1)
+#   partitions[]       – partition flags set here
+# Returns: exit status as a *bitmask* (stored in $ret)
+#   0   – both required partitions are present and meet size/type checks
+#   1   – EFI partition missing or doesn't meet requirements
+#   2   – system partition not detected or too small
+#   4   – EFI partition exists but its filesystem is NOT vfat
+#   8   – EFI partition smaller than the required minimum
+#  16   – system partition smaller than the required minimum
+# ----------------------------------------------------------------------
+detect_target_partitions() {
+   local line ret
+   local NAME TYPE PARTTYPE PARTLABEL FSTYPE SIZE
+   ret=0
+
+   set_config_vars
+   partitions=(0 0 0 0)
+   part_nodes=('' '' '' '')
+
+   # check all partitions on the device
+   while IFS='' read -r line; do
+      eval "$line"
+      [[ $TYPE == 'part' ]] || continue
+
+      # esp detect
+      if [[ $PARTTYPE == 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b' ]]; then
+         if [[ $FSTYPE != 'vfat' ]]; then
+            (( ret += 4 ))
+            log w "${NAME} (EFI partition) doesn't have FAT filesystem!"
+            continue
+         fi
+         if (( SIZE / sector_size < min_sizes[1] )); then
+            (( ret += 8 ))
+            log w "${NAME} (EFI partition) is too small!"
+            continue
+         fi
+         partitions[1]=1
+         part_nodes[1]="/dev/${NAME}"
+      fi
+
+      # system detect
+      if [[ $PARTLABEL == "${part_names[2]}" ]]; then
+         if (( SIZE / sector_size < min_sizes[2] )); then
+            (( ret += 16 ))
+            log w "${NAME} is too small for main partition!"
+            continue
+         fi
+         partitions[2]=1
+         part_nodes[2]="/dev/${NAME}"
+      fi
+
+   done < <(lsblk -Pnb -o NAME,TYPE,PARTTYPE,PARTLABEL,FSTYPE,SIZE "$device")
+
+   (( partitions[1] || (ret+=1) ))
+   (( partitions[2] || (ret+=2) ))
+   return $ret
 }

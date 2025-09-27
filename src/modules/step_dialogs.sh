@@ -62,6 +62,51 @@ pick_device() {
 }
 
 # ----------------------------------------------------------------------
+# Usage: ask_format_or_keep
+# Purpose: Show a dialog to choose if device should be formatted or current
+#          partition layout should be kept.
+# Parameters: none
+# Variables used/set:
+#   backtitle           – application name.
+#   SYSTEM_PART_NAME    – GPT partition name for system partition.
+#   step                – current wizard step.
+# Returns: 0 (calls `handle_exit_code`).
+# Side‑Effects: Displays `dialog` where user can choose how to proceed.
+# ----------------------------------------------------------------------
+ask_format_or_keep() {
+   local msg result status ret
+   local -a dialog_items
+   ret=0
+
+   dialog_items=("Format" "my device (all data will be lost).")
+   dialog_items+=("Keep" "my device partition layout.")
+   msg="To make device bootable, keybuilder needs at least:
+   * EFI system partition (fat)
+   * Main installation partition '${SYSTEM_PART_NAME}'"
+
+   # Show dialog
+   result=$(dialog --keep-tite --stdout --colors --extra-button \
+      --backtitle "$backtitle" \
+      --title "Choose format action" \
+      --ok-label "Next" \
+      --cancel-label "Exit" \
+      --extra-label "Back" \
+      --menu "${msg}" 20 60 6 \
+      "${dialog_items[@]}"
+   ) || ret=$?
+
+   # Process selection
+   if [[ $ret -eq 0 && $result == "Keep" ]]; then
+      status=0
+      detect_target_partitions || status=$?
+      confirm_detected_partitions $status || ret=$?
+      (( ret )) || (( step+=3 )) # skip 3 steps if 'Keep' is confirmed
+   fi
+
+   handle_exit_code $ret
+}
+
+# ----------------------------------------------------------------------
 # Usage: pick_partitions
 # Purpose: Let the user choose which partition types to create (bootloader,
 #          data, persistence) via a checklist dialog.
