@@ -11,7 +11,7 @@ STEP_DIALOGS_SH_INCLUDED=1
 #          option) and store the chosen device in the global variable `device`.
 # Parameters: none
 # Variables used/set:
-#   BACKTITLE           – application name.
+#   backtitle           – application name.
 #   message             – message for the user to display on dialog box
 #   device              – selected device path (set here).
 #   removable_devices[] – associative array filled by `find_devices`.
@@ -38,7 +38,7 @@ pick_device() {
 
    # Show menu dialog
    result=$(dialog --keep-tite --stdout \
-      --backtitle "$BACKTITLE" \
+      --backtitle "$backtitle" \
       --title "Select USB Device" \
       --ok-label "Next" \
       --cancel-label "Exit" \
@@ -67,7 +67,7 @@ pick_device() {
 #          data, persistence) via a checklist dialog.
 # Parameters: none
 # Globals used/set:
-#   BACKTITLE    – application name.
+#   backtitle    – application name.
 #   message      – message for the user to display on dialog box
 #   partitions[] – indexed array (size 4) of flags (0/1) indicating which
 #                  partitions are selected.
@@ -89,7 +89,7 @@ pick_partitions() {
 
    # Show dialog
    result=$(dialog --keep-tite --stdout --colors --extra-button \
-      --backtitle "$BACKTITLE" \
+      --backtitle "$backtitle" \
       --title "Select options" \
       --ok-label "Next" \
       --cancel-label "Exit" \
@@ -113,9 +113,9 @@ pick_partitions() {
       if (( partitions[0] + partitions[1] + partitions[2] == 0 )); then
          message="\Z1No partitions to create!\Zn\n"
          ret=2
+      else
+         set_partition_vars
       fi
-
-      set_partition_vars
    fi
 
    handle_exit_code $ret
@@ -128,7 +128,7 @@ pick_partitions() {
 #          validates it, and updates global `part_sizes` array accordingly.
 # Parameters: none (relies on globals)
 # Globals used/set:
-#   BACKTITLE      – application name.
+#   backtitle      – application name.
 #   message        – informational text displayed at the top
 #   device         – target block device (e.g. /dev/sdb)
 #   sector_size    – bytes per sector (from `blockdev --getss`)
@@ -161,7 +161,7 @@ set_partitions_size() {
 
    # Show dialog
    result=$(dialog --keep-tite --extra-button --colors --stdout \
-      --backtitle "$BACKTITLE" \
+      --backtitle "$backtitle" \
       --title "Adjust partition sizes" \
       --ok-label "Next" \
       --cancel-label "Exit" \
@@ -173,8 +173,7 @@ set_partitions_size() {
    # Process input
    if (( ret == 0 )); then
       # shellcheck disable=SC2086
-      IFS=$'\n' validate_sizes $result
-      ret=$(( ret + $? ))
+      validate_sizes $result || (( ret += $? ))
    fi
 
    handle_exit_code $ret
@@ -186,7 +185,7 @@ set_partitions_size() {
 #          partition layout that will be applied to the target device.
 # Parameters: none (relies on globals)
 # Globals used/set: none
-#   BACKTITLE   – application name.
+#   backtitle   – application name.
 #   message     – informational text displayed on dialog box
 # Returns: 0 (calls `handle_exit_code`).
 # Side‑Effects:
@@ -203,7 +202,7 @@ confirm_format() {
    ret=0
 
    # ensure nothing is mounted before proceeding
-   unmount_device_partitions || {
+   unmount_partitions || {
       request_manual_unmount || app_exit
       return $ret
    }
@@ -219,7 +218,7 @@ confirm_format() {
 
    # show the confirmation dialog
    dialog --keep-tite --colors --no-collapse --extra-button \
-      --backtitle "$BACKTITLE" \
+      --backtitle "$backtitle" \
       --title "Confirm partitioning scheme" \
       --yes-label "Next" \
       --no-label "Exit" \
@@ -243,7 +242,7 @@ confirm_format() {
 #          then performs installation according to user selection.
 # Parameters: none (relies on globals)
 # Globals used/set: none
-#   BACKTITLE   – application name.
+#   backtitle   – application name.
 # Returns: 0 (calls `handle_exit_code`).
 # Side‑Effects:
 #   * Calls `check_uefi` and terminates script if it fails.
@@ -258,7 +257,7 @@ install_components() {
 
    # show the dialog
    dialog --keep-tite --extra-button \
-      --backtitle "$BACKTITLE" \
+      --backtitle "$backtitle" \
       --title "Choose components to install" \
       --yes-label "Next" \
       --no-label "Exit" \

@@ -4,13 +4,13 @@ set -euo pipefail
 # ----------------------------------------------------------------------
 # Global variables
 # ----------------------------------------------------------------------
-BACKTITLE="Keybuilder" # program name.
+APPNAME="Keybuilder" # program name.
 VERSION="0.2"          # program version
 DEBUG=${DEBUG:-1}  # if not-null causes app to print verbose messages to `stderr`.
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" # installation directory.
-SHARED_DIR="/usr/share/${BACKTITLE,,}" 
-GLOBAL_CONFIG_FILE="/etc/${BACKTITLE,,}.conf"        # location of configuration file.
-USER_CONFIG_FILE="${XDG_CONFIG_HOME:-"${HOME}/.config"}/${BACKTITLE,,}.conf" # as above (per user)
+SHARED_DIR="/usr/share/${APPNAME,,}" 
+GLOBAL_CONFIG_FILE="/etc/${APPNAME,,}.conf"        # location of configuration file.
+USER_CONFIG_FILE="${XDG_CONFIG_HOME:-"${HOME}/.config"}/${APPNAME,,}.conf" # as above (per user)
 
 # Import modules
 for module in "${BASE_DIR}/modules/"*.sh; do
@@ -18,7 +18,7 @@ for module in "${BASE_DIR}/modules/"*.sh; do
 done
 
 # Determine resources path (if running portable)
-if [[ $(basename "$(dirname "$BASE_DIR")") == "${BACKTITLE,,}" ]]; then
+if [[ $(basename "$(dirname "$BASE_DIR")") == "${APPNAME,,}" ]]; then
    SHARED_DIR=$(dirname "$BASE_DIR")
 elif [[ -d $SHARED_DIR ]]; then
    :
@@ -71,7 +71,7 @@ fi
 main() {
    require_root "$@"
 
-   local step message device sector_size offset usable_size 
+   local backtitle step message device sector_size offset usable_size 
    local -a partitions part_sizes part_names min_sizes part_nodes
    local -A removable_devices
 

@@ -19,7 +19,7 @@ RESET=$(printf '\033[0m')
 # ----------------------------------------------------------------------
 trap 'abort' INT
 trap 'abort' TERM
-trap 'exit_handler' EXIT
+trap 'errexit_handler' EXIT
 
 # ----------------------------------------------------------------------
 # Usage:   log <level> "<message>"
@@ -90,7 +90,7 @@ app_exit() {
 #   * Writes a formatted error message to stderr via `log e`.
 #   * Removes the temporary file referenced by `$tmpfile` (if set).
 # ----------------------------------------------------------------------
-exit_handler() {
+errexit_handler() {
    case ${FUNCNAME[1]} in
       abort|app_exit|main) ;;
       *) log e "

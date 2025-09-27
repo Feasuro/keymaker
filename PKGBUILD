@@ -9,7 +9,6 @@ license=('GPL-3.0-or-later')
 depends=(
   'dialog'
   'util-linux'
-  'udev'
   'exfatprogs'
   'dosfstools'
   'e2fsprogs'

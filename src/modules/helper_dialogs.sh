@@ -10,7 +10,7 @@ HELPER_DIALOGS_SH_INCLUDED=1
 # Purpose: Prompt the user to type a device path manually (advanced mode).
 # Parameters: none
 # Variables used/set:
-#   BACKTITLE   – application name.
+#   backtitle   – application name.
 #   device      – variable receiving the selected device path.
 # Returns:
 #   0 – a valid device was entered,
@@ -23,21 +23,20 @@ manual_dev_entry() {
 
    # Show dialog
    result=$(dialog --keep-tite --stdout \
-      --backtitle "$BACKTITLE" \
+      --backtitle "$backtitle" \
       --title "Enter device" \
       --inputbox "Enter device name (e.g. /dev/sdX)" 10 40
    ) || return 2
 
    # Check if a block device was given
    if [[ -b $result ]]; then
-      devtype="$(udevadm info --query=property --no-pager --name="${result}" \
-         2>/dev/null | grep '^DEVTYPE=' | cut -d= -f2)"
+      devtype="$(lsblk -lnd -o TYPE "$result")"
       # Check if it is a disk, ask for confirmation if not
       if [[ $devtype = 'disk' ]]; then
          device="$result"
          return 0
       elif dialog --keep-tite \
-            --backtitle "$BACKTITLE" \
+            --backtitle "$backtitle" \
             --title "Warning" \
             --yesno "${result} appears to be ${devtype} not a disk.\nAre you sure you know what you are doing?" 10 40
          then
@@ -46,7 +45,7 @@ manual_dev_entry() {
       fi
    else
       dialog --keep-tite \
-         --backtitle "$BACKTITLE" \
+         --backtitle "$backtitle" \
          --title "Warning" \
          --msgbox "${result} is not a valid block device!" 10 40
    fi
@@ -58,7 +57,7 @@ manual_dev_entry() {
 # Purpose: Prompt the user to unmount partitions manually.
 # Parameters: none
 # Variables used/set:
-#   BACKTITLE   – application name.
+#   backtitle   – application name.
 #   device      – variable receiving the selected device path.
 # Returns: 0 – when user presses ok
 # Side‑Effects: Displays `dialog` with a message.
@@ -74,7 +73,7 @@ Unmount any mounted ${device}N partition
 manually and press OK to continue."
 
    dialog --keep-tite --colors \
-      --backtitle "$BACKTITLE" \
+      --backtitle "$backtitle" \
       --title "Warning" \
       --yes-label "OK" \
       --no-label "Exit" \
@@ -87,7 +86,7 @@ manually and press OK to continue."
 #          UEFI requirement.
 # Parameters: none
 # Variables used/set:
-#   BACKTITLE   – application name.
+#   backtitle   – application name.
 # Returns:
 #   0 – UEFI detected
 #   1 – non-UEFI system
@@ -105,7 +104,7 @@ check_uefi() {
 Please reboot the system into UEFI mode to continue."
 
       dialog --keep-tite --colors \
-         --backtitle "$BACKTITLE" \
+         --backtitle "$backtitle" \
          --title "Error" \
          --msgbox "$msg" 10 50
 

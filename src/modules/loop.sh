@@ -49,6 +49,7 @@ require_root() {
 #     of the wizard.
 # ----------------------------------------------------------------------
 run_loop() {
+   backtitle="${APPNAME} ${VERSION}"
    message=''
    step=1
 

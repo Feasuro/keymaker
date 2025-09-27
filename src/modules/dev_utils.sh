@@ -7,51 +7,34 @@ DEV_UTILS_SH_INCLUDED=1
 
 # ----------------------------------------------------------------------
 # Usage: find_devices
-# Purpose: Detect removable USB block devices and fill the associative
-#          array `removable_devices[<devname>]="<vendor> <model>"`.
-# Parameters: none (relies on state variables)
+# Purpose: Detect removable USB block devices with write permission
+#          and fill the associative array.
+# Parameters: none (relies on state runtime variables)
 # Variables used/set:
 #   removable_devices[] – associative array populated by this function.
 # Returns: nothing (populates the global array).
 # ----------------------------------------------------------------------
 find_devices() {
-   log i "Looking for connected devices."
-   local sys_path id_bus id_vendor id_model devname label
+   local line label
+   local NAME TYPE TRAN RM RO VENDOR MODEL
    removable_devices=()
 
-   for sys_path in /sys/block/*; do
-      # Reset variables for each iteration
-      id_bus='' id_vendor='' id_model='' devname=''
-      # Parse known keys
-      while IFS='=' read -r key value; do
-         case "$key" in
-            ID_BUS) id_bus="$value" ;;
-            ID_VENDOR) id_vendor="$value" ;;
-            ID_MODEL) id_model="$value" ;;
-            DEVNAME) devname="$value" ;;
-         esac
-      done < <(udevadm info --query=property --no-pager --path="$sys_path" 2>/dev/null)
+   log i "Looking for connected devices."
+   while read -r line; do
+      eval "$line"
 
-      # Skip if it's not a USB device or devname is missing
-      if [[ "$id_bus" != 'usb' || -z "$devname" ]]; then
-         continue
-      fi
-
-      # Skip read-only devices
-      if [[ -f "$sys_path/ro" && $(<"$sys_path/ro") -eq 1 ]]; then
-         log d "${devname} is read-only, skipping."
-         continue
-      fi
+      # check if it'a an usb disk, removable and write permissive
+      [[ $TYPE == 'disk' ]] || continue
+      [[ $TRAN == 'usb' ]] || continue
+      (( RM == 1 )) || continue
+      (( RO == 0 )) || continue
 
       # Sanitize: collapse whitespace in vendor/model string
-      label="$(printf '%s %s' "$id_vendor" "$id_model" | tr -s '[:space:]' ' ')"
-      # Only store safe device names (match /dev/sd[a-z]*)
-      if [[ "$devname" =~ ^/dev/sd[a-z]+$ ]]; then
-            removable_devices["$devname"]="$label"
-      fi
-   done
+      label="$(printf '%s %s' "$VENDOR" "$MODEL" | tr -s '[:space:]' ' ')"
+      removable_devices["/dev/${NAME}"]="$label"
+   done < <(lsblk -Pn -o NAME,TYPE,TRAN,RM,RO,VENDOR,MODEL)
 
-   # Check if we have any devices
+   # Check if we have found any devices
    if [[ ${#removable_devices[@]} -eq 0 ]]; then
       message="No removable USB devices found."
       log i "${message}"
@@ -204,7 +187,6 @@ validate_sizes() {
    local sum index size accepted
    local -a new_sizes
    message=''
-   IFS=' '
    accepted=1
 
    # assign new_sizes array with user input
@@ -245,11 +227,11 @@ validate_sizes() {
    # if free space was chosen we try to adjust it
    if (( partitions[3] )); then
       if (( sum > usable_size && sum - new_sizes[3] < usable_size - min_sizes[3] )); then
-         log d "   adjust free space down"
+         [[ -z $DEBUG || $DEBUG == 0 ]] || echo "   adjusted free space down" >&2
          (( new_sizes[3] -= sum - usable_size ))
          sum=$usable_size
       elif (( sum < usable_size )); then
-         log d "   adjust free space up"
+         [[ -z $DEBUG || $DEBUG == 0 ]] || echo "   adjusted free space up" >&2
          (( new_sizes[3] += usable_size - sum ))
          sum=$usable_size
       fi
@@ -279,19 +261,16 @@ validate_sizes() {
 #   0 – all partitions were already unmounted or were successfully unmounted
 #   1 – one or more partitions could not be unmounted
 # -------------------------------------------------
-unmount_device_partitions() {
-   local ret part_list part
+unmount_partitions() {
+   local ret part
    ret=0
 
-   # get partitions belonging to the device
-   part_list=$(lsblk -ln -o NAME "$device")
-
    # Iterate over each partition and unmount it
-   while IFS= read -r part; do
+   while read -r part; do
       part="/dev/${part}"
       # check if already unmounted
       findmnt "$part" >/dev/null || {
-         log d "${part} already unmounted"
+         log d "${part} not mounted"
          continue
       }
 
@@ -301,7 +280,7 @@ unmount_device_partitions() {
          log w "Failed to unmount ${part}"
          ret=1
       fi
-   done <<<"$part_list"
+   done < <(lsblk -ln -o NAME "$device")
 
    return $ret
 }
@@ -345,9 +324,9 @@ EOF
 
       # Choose the proper GPT type GUID
       case $index in
-         0) guid="EBD0A0A2-B9E5-4433-87C0-68B6B72699C7" ;; # Microsoft basic data
-         1) guid="C12A7328-F81F-11D2-BA4B-00A0C93EC93B" ;; # EFI System Partition
-         2) guid="0FC63DAF-8483-4772-8E79-3D69D8477DE4" ;; # Linux filesystem
+         0) guid="ebd0a0a2-b9e5-4433-87c0-68b6b72699c7" ;; # Microsoft basic data
+         1) guid="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" ;; # EFI System Partition
+         2) guid="0fc63daf-8483-4772-8e79-3d69d8477de4" ;; # Linux filesystem
          3) continue ;; # free space
       esac
 
